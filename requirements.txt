@@ -1,0 +1,5 @@
+simpy>=4.1
+ortools>=9.10
+matplotlib>=3.8
+plotly>=5.22
+streamlit>=1.30
