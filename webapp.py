@@ -17,6 +17,7 @@ import time
 
 import streamlit as st
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 from config import (
     DEFAULT_CONFIG,
@@ -32,16 +33,322 @@ from report import analyze, Analysis
 
 _BUILD_INFO_TEXT = "(주) 지엠티 김길용 수석, v0.0.1 (2026.05.06)"
 
+
+def _build_process_graphviz(
+    trucks_per_day: int,
+    payload_ton: float,
+    flake_ratio: int,
+    furnace_count: int,
+    bottleneck: str | None = None,
+) -> str:
+    """가독성 중심 상세 공정 Graphviz."""
+    total_inbound_ton = trucks_per_day * payload_ton
+    flake_ton = total_inbound_ton * (flake_ratio / 100.0)
+    scr_ton = max(total_inbound_ton - flake_ton, 0.0)
+    bottleneck_text = bottleneck or ""
+    is_press = "압착" in bottleneck_text
+    is_furnace = "반사로" in bottleneck_text
+    is_outbound = "출하" in bottleneck_text
+
+    def style(is_bottle: bool, fill: str) -> str:
+        border = "#dc2626" if is_bottle else "#5b6b7a"
+        bg = "#fee2e2" if is_bottle else fill
+        return f'shape=box style="rounded,filled" color="{border}" fillcolor="{bg}" penwidth=2'
+
+    return f"""
+digraph G {{
+  rankdir=LR;
+  graph [pad=0.2, nodesep=0.45, ranksep=0.55, bgcolor="white"];
+  node [fontname="Malgun Gothic", fontsize=11, shape=box, style="rounded,filled", color="#5b6b7a", fillcolor="#eef6ff", penwidth=1.5];
+  edge [color="#6b7280", penwidth=1.4, arrowsize=0.7];
+
+  inbound   [label="트럭 입고\\n{trucks_per_day}대/일 · {total_inbound_ton:.0f}t/일"];
+  weigh     [label="1차/2차 계근\\n각 5분"];
+  unload    [label="하역\\n20분 · 베이 운영"];
+  sorting   [label="선별\\n30분 · 8개 sub-pile"];
+  press     [{style(is_press, "#eaf5ff")} label="압착/파레트\\n0.5t 사이클 8.5분\\n파레트 버퍼"];
+  elevator  [label="엘리베이터\\n2파레트/10분"];
+  furnace   [{style(is_furnace, "#fff4e8")} label="장입/용해\\n반사로 {furnace_count}대 · 12h"];
+  casting   [label="하이브리드 주조\\nFlake {flake_ratio}% · SCR {100 - flake_ratio}%"];
+
+  flake_yard [label="Flake 야적\\n{flake_ton:.0f}t", fillcolor="#e8f6ff"];
+  scr_yard   [label="SCR 야적\\n{scr_ton:.0f}t", fillcolor="#ffeded"];
+  flake_out  [{style(is_outbound, "#f4efff")} label="Flake 상차/출하\\n상차 → 계근 → 출고"];
+  scr_out    [{style(is_outbound, "#f4efff")} label="SCR 상차/출하\\n상차 → 계근 → 출고"];
+
+  inbound -> weigh -> unload -> sorting -> press -> elevator -> furnace -> casting;
+  casting -> flake_yard -> flake_out;
+  casting -> scr_yard -> scr_out;
+}}
+"""
+
+
+def _build_detailed_process_figure(
+    trucks_per_day: int,
+    payload_ton: float,
+    flake_ratio: int,
+    furnace_count: int,
+    bottleneck: str | None = None,
+) -> go.Figure:
+    """세부 공정(입고~출하) 라인 다이어그램."""
+    total_inbound_ton = trucks_per_day * payload_ton
+    flake_ton = total_inbound_ton * (flake_ratio / 100.0)
+    scr_ton = max(total_inbound_ton - flake_ton, 0.0)
+    bottleneck_text = bottleneck or ""
+
+    nodes = [
+        (0.07, 0.74, "트럭 입고", f"{trucks_per_day}대/일\n{total_inbound_ton:.0f}t/일", "#2563eb", False),
+        (0.18, 0.74, "계근/하역", "계근 5분\n하역 20분", "#3b82f6", False),
+        (0.29, 0.74, "선별", "30분\n8개 sub-pile", "#60a5fa", False),
+        (0.40, 0.74, "압착/파레트", "0.5t 사이클 8.5분\n파레트 버퍼", "#0284c7", "압착" in bottleneck_text),
+        (0.51, 0.74, "엘리베이터", "2파레트/10분", "#0ea5e9", False),
+        (0.62, 0.74, "장입/용해", f"반사로 {furnace_count}대\n12h", "#f59e0b", "반사로" in bottleneck_text),
+        (0.73, 0.74, "하이브리드 주조", f"Flake {flake_ratio}%\nSCR {100-flake_ratio}%", "#22c55e", False),
+        (0.84, 0.58, "Flake 야적", f"{flake_ton:.0f}t", "#0ea5e9", False),
+        (0.84, 0.36, "SCR 야적", f"{scr_ton:.0f}t", "#dc2626", False),
+        (0.94, 0.58, "Flake 출하", "상차→계근→출고", "#6366f1", "출하" in bottleneck_text),
+        (0.94, 0.36, "SCR 출하", "상차→계근→출고", "#7c3aed", "출하" in bottleneck_text),
+    ]
+
+    fig = go.Figure()
+    shapes = []
+    annotations = []
+
+    for x, y, title, desc, color, is_bottle in nodes:
+        fill = "#fee2e2" if is_bottle else "#eff6ff"
+        border = "#dc2626" if is_bottle else color
+        shapes.append(
+            dict(
+                type="rect",
+                xref="paper",
+                yref="paper",
+                x0=x - 0.045,
+                x1=x + 0.045,
+                y0=y - 0.08,
+                y1=y + 0.08,
+                line=dict(color=border, width=2.5 if is_bottle else 1.6),
+                fillcolor=fill,
+            )
+        )
+        annotations.append(
+            dict(
+                x=x,
+                y=y,
+                xref="paper",
+                yref="paper",
+                text=f"<b>{title}</b><br><span style='font-size:10px'>{desc}</span>",
+                showarrow=False,
+                align="center",
+                font=dict(size=11, color="#0f172a"),
+            )
+        )
+
+    arrow_specs = [
+        (0.135, 0.74, -70, 0), (0.245, 0.74, -70, 0), (0.355, 0.74, -70, 0),
+        (0.465, 0.74, -70, 0), (0.575, 0.74, -70, 0), (0.685, 0.74, -70, 0),
+        (0.79, 0.62, -55, 62), (0.79, 0.48, -55, -62),
+        (0.895, 0.58, -55, 0), (0.895, 0.36, -55, 0),
+    ]
+    for x, y, ax, ay in arrow_specs:
+        annotations.append(
+            dict(
+                x=x, y=y, xref="paper", yref="paper",
+                ax=ax, ay=ay, axref="pixel", ayref="pixel",
+                text="", showarrow=True, arrowhead=3, arrowsize=1.0, arrowwidth=1.8, arrowcolor="#64748b",
+            )
+        )
+
+    annotations.append(
+        dict(
+            x=0.5, y=0.10, xref="paper", yref="paper", showarrow=False,
+            text="상세 흐름: 입고 → 계근/하역 → 선별 → 압착/버퍼 → 엘리베이터 → 용해(12h) → 주조 → 야적 → 상차/출하",
+            font=dict(size=12, color="#334155"),
+        )
+    )
+
+    fig.update_layout(
+        height=420,
+        margin=dict(l=8, r=8, t=8, b=8),
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False),
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        shapes=shapes,
+        annotations=annotations,
+    )
+    return fig
+
+
+def _build_process_timeline_figure(
+    batch_ton: float,
+    flake_ratio: int,
+) -> go.Figure:
+    """멋진 대시보드형 타임라인: 누적 네온 라인 + 도넛 + 히트맵."""
+
+    def scenario_steps(ratio: int) -> tuple[list[str], list[float], float, float]:
+        flake_ton = batch_ton * (ratio / 100.0)
+        scr_ton = max(batch_ton - flake_ton, 0.0)
+        press_for_batch = (batch_ton / 0.5) * 8.5
+        elevator = (batch_ton / 80.0) * 160.0
+        flake_cast = (flake_ton / 1.0) * 2.5 if flake_ton > 0 else 0.0
+        scr_cast = (scr_ton / 4.0) * 10.0 if scr_ton > 0 else 0.0
+        branch_elapsed = max(flake_cast, scr_cast)
+        labels = ["1차 계근", "하역", "2차 계근", "선별", "압착/파레트", "엘리베이터", "장입 준비", "용해(12h)", "주조 셋업", "분기 주조 완료"]
+        durations = [5, 20, 5, 30, press_for_batch, elevator, 120, 720, 90, branch_elapsed]
+        return labels, durations, flake_ton, scr_ton
+
+    low_ratio = max(10, flake_ratio - 20)
+    high_ratio = min(90, flake_ratio + 20)
+    scenarios = [("저 Flake", low_ratio), ("기준", flake_ratio), ("고 Flake", high_ratio)]
+
+    base_labels, base_durations_min, base_flake_ton, base_scr_ton = scenario_steps(flake_ratio)
+    base_durations_h = [v / 60.0 for v in base_durations_min]
+    base_total_h = sum(base_durations_h)
+    cumulative = []
+    cur = 0.0
+    for d in base_durations_h:
+        cur += d
+        cumulative.append(cur)
+
+    fig = make_subplots(
+        rows=2,
+        cols=2,
+        specs=[[{"type": "xy", "colspan": 2}, None], [{"type": "domain"}, {"type": "xy"}]],
+        vertical_spacing=0.25,
+        horizontal_spacing=0.12,
+        subplot_titles=("기준 시나리오: 공정 누적시간 네온 타임라인", "공정 시간 비중", "경우의 수별 누적시간 히트맵"),
+    )
+
+    fig.add_trace(
+        go.Bar(
+            x=base_labels,
+            y=base_durations_h,
+            marker_color="rgba(56,189,248,0.35)",
+            text=[f"{v:.2f}h" for v in base_durations_h],
+            textposition="inside",
+            hovertemplate="%{x}<br>소요: %{y:.2f}시간<extra></extra>",
+            showlegend=False,
+        ),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=base_labels,
+            y=cumulative,
+            mode="lines+markers+text",
+            line=dict(color="#2563eb", width=4),
+            marker=dict(size=10, color="#0ea5e9", line=dict(color="white", width=1)),
+            text=[f"{v:.1f}h" for v in cumulative],
+            textposition="top center",
+            hovertemplate="%{x}<br>누적: %{y:.2f}시간<extra></extra>",
+            showlegend=False,
+        ),
+        row=1,
+        col=1,
+    )
+
+    fig.add_trace(
+        go.Pie(
+            labels=base_labels,
+            values=base_durations_h,
+            hole=0.58,
+            sort=False,
+            textinfo="percent",
+            hovertemplate="%{label}<br>%{value:.2f}시간 (%{percent})<extra></extra>",
+            marker=dict(line=dict(color="white", width=1)),
+            showlegend=False,
+        ),
+        row=2,
+        col=1,
+    )
+
+    heat_y = []
+    heat_z = []
+    for s_name, ratio in scenarios:
+        labels, durations_min, _, _ = scenario_steps(ratio)
+        cum_vals = []
+        c = 0.0
+        for d in durations_min:
+            c += d / 60.0
+            cum_vals.append(c)
+        heat_y.append(f"{s_name} ({ratio}%)")
+        heat_z.append(cum_vals)
+
+    fig.add_trace(
+        go.Heatmap(
+            x=base_labels,
+            y=heat_y,
+            z=heat_z,
+            colorscale="YlGnBu",
+            colorbar=dict(title="누적시간(h)", len=0.8),
+            hovertemplate="시나리오: %{y}<br>단계: %{x}<br>누적: %{z:.2f}시간<extra></extra>",
+        ),
+        row=2,
+        col=2,
+    )
+
+    fig.update_layout(
+        height=760,
+        margin=dict(l=40, r=25, t=80, b=45),
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        xaxis=dict(tickangle=-25),
+        yaxis=dict(title="시간 (시간)", gridcolor="rgba(148,163,184,0.25)"),
+        xaxis3=dict(tickangle=-25),
+        yaxis3=dict(title="시나리오"),
+    )
+    fig.add_annotation(
+        x=0.24,
+        y=0.19,
+        xref="paper",
+        yref="paper",
+        showarrow=False,
+        text=f"<b>총 누적시간</b><br>{base_total_h:.2f}h",
+        font=dict(size=14, color="#1e3a8a"),
+    )
+    fig.add_annotation(
+        x=0.5,
+        y=-0.08,
+        xref="paper",
+        yref="paper",
+        showarrow=False,
+        text=(
+            f"기준 배치 {batch_ton:.0f}t | 기준 분기량 Flake {base_flake_ton:.1f}t, SCR {base_scr_ton:.1f}t "
+            f"(분기 주조는 병렬 진행 기준으로 긴 쪽 시간 적용)"
+        ),
+        font=dict(size=12, color="#334155"),
+    )
+    return fig
+
 # ---------------------------------------------------------------------------
 # 페이지 설정
 # ---------------------------------------------------------------------------
 
 st.set_page_config(
-    page_title="군산 공장 하이브리드 시뮬레이션",
+    page_title="SCR공정 물류 시뮬레이션",
     page_icon="🏭",
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# ---------------------------------------------------------------------------
+# 접근 제어
+# ---------------------------------------------------------------------------
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.title("🔒 접근 제한")
+    st.write("비밀번호를 입력해야 대시보드에 접속할 수 있습니다.")
+    password_input = st.text_input("비밀번호", type="password", placeholder="비밀번호 입력")
+    if st.button("접속", type="primary"):
+        if password_input == "6501":
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("비밀번호가 올바르지 않습니다.")
+    st.stop()
 
 # ---------------------------------------------------------------------------
 # 사이드바 - 파라미터 입력
@@ -49,9 +356,34 @@ st.set_page_config(
 
 st.sidebar.title("🏭 시뮬레이션 파라미터")
 st.sidebar.caption("ℹ️ 각 항목 위에 마우스를 올리면 상세 설명이 표시됩니다.")
+run_button = st.sidebar.button(
+    "🚀 시뮬레이션 실행", type="primary", use_container_width=True,
+    help="""▶️ **시뮬레이션 실행**
+
+설정한 파라미터로 이산사건 시뮬레이션을 실행합니다.
+
+**실행 내용:**
+1. SimPy 기반 DES 시뮬레이션 실행
+2. 공정별 이벤트 로그 생성
+3. KPI 및 병목 분석
+4. 시각화 결과 생성
+
+**예상 소요 시간:**
+- 7일 시뮬레이션: 약 1~2초
+- 30일 시뮬레이션: 약 3~5초
+
+**결과 확인:**
+- 핵심 지표 (KPI 카드)
+- 병목 진단 및 권장사항
+- 자원 가동률 차트
+- 버퍼 시계열 그래프
+- 반사로 Gantt 차트
+- 트럭 흐름 분석"""
+)
+st.sidebar.caption("필요할 때 언제든 위 버튼으로 즉시 실행하세요.")
 
 st.sidebar.header("1. 기본 설정")
-st.sidebar.caption("시뮬레이션 실행 기간 및 재현성 설정")
+st.sidebar.caption("시뮬레이션 실행 기간 설정")
 sim_days = st.sidebar.slider(
     "시뮬레이션 일수", 1, 30, DEFAULT_CONFIG.sim_days,
     help="""📅 **시뮬레이션 기간 설정**
@@ -68,25 +400,7 @@ sim_days = st.sidebar.slider(
 - 반사로 12시간 용해 주기 고려 시 최소 3일 권장
 - 초기 warm-up 기간(1~2일) 후 정상 상태 도달"""
 )
-random_seed = st.sidebar.number_input(
-    "랜덤 시드", value=DEFAULT_CONFIG.random_seed,
-    help="""🎲 **난수 생성 시드값**
-
-확률적 이벤트(트럭 도착 시간, 출하 트럭 간격 등)의 재현성을 위한 시드값입니다.
-
-**사용 목적:**
-- 동일 시드 → 동일 결과 (재현성 보장)
-- 다른 시드 → 다른 시나리오 (민감도 분석)
-
-**권장 사용법:**
-- 파라미터 비교 시: 시드 고정 (42 등)
-- 통계 분석 시: 여러 시드로 반복 실행
-- 무작위 탐색: 다양한 시드값 테스트
-
-**기술적 배경:**
-- Python `random` 모듈의 시드로 사용
-- 지수분포, 균등분포 등 모든 확률 변수에 영향"""
-)
+random_seed = DEFAULT_CONFIG.random_seed
 
 st.sidebar.header("2. 입고/하역")
 st.sidebar.caption("스크랩 원료 트럭 입고 및 하역 설정")
@@ -377,38 +691,11 @@ empty_truck_interval = st.sidebar.slider(
 - 트럭 평균 대기시간 최소화"""
 )
 
-# 실행 버튼
-st.sidebar.markdown("---")
-run_button = st.sidebar.button(
-    "🚀 시뮬레이션 실행", type="primary", use_container_width=True,
-    help="""▶️ **시뮬레이션 실행**
-
-설정한 파라미터로 이산사건 시뮬레이션을 실행합니다.
-
-**실행 내용:**
-1. SimPy 기반 DES 시뮬레이션 실행
-2. 공정별 이벤트 로그 생성
-3. KPI 및 병목 분석
-4. 시각화 결과 생성
-
-**예상 소요 시간:**
-- 7일 시뮬레이션: 약 1~2초
-- 30일 시뮬레이션: 약 3~5초
-
-**결과 확인:**
-- 핵심 지표 (KPI 카드)
-- 병목 진단 및 권장사항
-- 자원 가동률 차트
-- 버퍼 시계열 그래프
-- 반사로 Gantt 차트
-- 트럭 흐름 분석"""
-)
-
 # ---------------------------------------------------------------------------
 # 메인 - 결과 대시보드
 # ---------------------------------------------------------------------------
 
-st.title("🏭 군산 공장 하이브리드 공정 시뮬레이션")
+st.title("🏭 SCR공정 물류 시뮬레이션")
 st.markdown(
     f"""
     <div style="text-align:right; color:#6b7280; font-size:12px; margin-top:-8px;">
@@ -422,7 +709,17 @@ st.markdown("""
 5단계 공정을 SimPy 이산사건 시뮬레이션으로 모델링합니다.
 **왼쪽 사이드바에서 파라미터를 조정**한 뒤 **시뮬레이션 실행** 버튼을 누르세요.
 """)
-
+st.subheader("🧭 세부공정 프로세스")
+st.graphviz_chart(
+    _build_process_graphviz(
+        trucks_per_day=trucks_per_day,
+        payload_ton=payload_ton,
+        flake_ratio=flake_ratio,
+        furnace_count=furnace_count,
+        bottleneck=None,
+    ),
+    use_container_width=True,
+)
 if run_button:
     # 설정 조립
     inbound = dataclasses.replace(
@@ -543,7 +840,16 @@ if run_button:
         **일반적인 병목 순서:** 반사로 용해 > 압착기 > 하역장 > 선별
         """)
     st.error(f"**식별된 병목: {analysis.bottleneck}** — {analysis.bottleneck_reason}")
-
+    st.graphviz_chart(
+        _build_process_graphviz(
+            trucks_per_day=trucks_per_day,
+            payload_ton=payload_ton,
+            flake_ratio=flake_ratio,
+            furnace_count=furnace_count,
+            bottleneck=analysis.bottleneck,
+        ),
+        use_container_width=True,
+    )
     # 공정 흐름 카드
     stages = [
         ("1. 입고/하역", f"트럭 {trucks_per_day}대/일 × {payload_ton}t"),
