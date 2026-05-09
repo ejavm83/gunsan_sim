@@ -1,0 +1,165 @@
+' 군산 공장 시뮬 전체 구동 순서 — 순차(시퀀스) 다이어그램 (가능한 표현은 한글)
+' 렌더: plantuml docs/execution_flow_sequence.puml
+' 또는 VS Code / IntelliJ PlantUML 확장으로 미리보기
+
+@startuml main_cli_execution
+title **1. 명령줄(CLI) 실행** — python main.py 호출부터 산출물까지
+
+actor "사용자" as User
+participant "CLI 진입점\n(main.py)" as Main
+participant "시뮬레이션 설정\n(config.py)" as CFG
+participant "시뮬 실행\n(simulation.py)" as RS
+participant "지표·이벤트 로그\n(metrics.py)" as MET
+participant "반사로 스케줄 최적화\n(optimizer.py)" as OPT
+participant "정적 차트\n(visualize.py)" as VIS
+participant "공장 애니메이션\n(animate.py)" as ANI
+participant "HTML 리포트\n(report.py)" as RPT
+
+User -> Main: python main.py (옵션 부여 가능)
+activate Main
+
+Main -> Main: 명령줄 인자 해석\n(--days, --seed, --no-plot,\n--no-optimize, --events,\n--animate, --report 등)
+
+Main -> CFG: 기본 설정에 일수·난수 시드 반영\n(dataclasses.replace)
+
+Main -> RS: 시뮬레이션 실행 요청\nrun_simulation(설정)
+activate RS
+RS --> MET: Metrics 생성, 이벤트 누적
+RS --> Main: 지표 객체(metrics) 반환
+deactivate RS
+
+Main -> MET: 기간 기준 요약 지표 계산\nsummary(시뮬_상한_분)
+MET --> Main: 핵심지표 딕셔너리
+
+Main -> User: 콘솔에 요약 표 출력\nformat_summary
+
+opt **CP-SAT 비교** (기본 케이스, --no-optimize 없을 때)
+  Main -> OPT: 배치 1회 처리 시간 추정\nestimate_batch_duration
+  OPT --> Main: 소요 분
+  Main -> Main: 이벤트 중 압착 완료 시각 수집\n(단계=press, 종류=pallet_done)
+  alt **시뮬 실측으로 배치 시작 시각 확보**
+    Main -> OPT: 최적 스케줄 풀기\nsolve_furnace_schedule
+    OPT --> Main: 반사로 배정·최종 완료 시각
+  else **실측 부족 시 추정 모델 사용**
+    Main -> OPT: 배치 시작 시각 추정\nestimate_batch_releases
+    OPT --> Main: 시작 시각 목록
+    Main -> OPT: 최적 스케줄 풀기\nsolve_furnace_schedule
+    OPT --> Main: 반사로 배정·최종 완료 시각
+  end
+  Main -> User: CP-SAT 결과·메이크스팬 비교 출력
+end
+
+opt **이벤트 CSV 저장** (--events 경로 지정 시)
+  Main -> Main: CSV 기록\nwrite_events_csv
+  Main -> User: 저장 경로 안내
+end
+
+opt **정적 차트** (기본, --no-plot 없을 때)
+  Main -> VIS: 버퍼·간트·트럭 등 일괄 저장\nrender_all
+  VIS --> Main: 저장된 파일 경로들
+  Main -> User: 차트 저장 완료 안내
+end
+
+opt **공장 애니메이션** (--animate 지정 시)
+  Main -> ANI: GIF/MP4 생성\nrender_factory_animation
+  ANI --> Main: 출력 파일 경로
+  Main -> User: 애니메이션 저장 안내
+end
+
+opt **HTML 리포트** (--report 지정 시)
+  Main -> RPT: 인터랙티브 리포트 생성\ngenerate_report
+  RPT --> Main: HTML 경로
+  Main -> User: 리포트 저장·브라우저 열기 안내
+end
+
+Main -> User: 프로그램 종료
+deactivate Main
+
+@enduml
+
+
+@startuml run_simulation_internals
+title **2. 시뮬레이션 엔진 기동** — run_simulation() 내부 (simulation.py + SimPy)
+
+participant "시뮬 실행\nrun_simulation" as RS
+participant "난수 생성기\n(random)" as RNG
+participant "이산사건 환경\n(simpy.Environment)" as ENV
+participant "공장 모델\n(GunsanFactory)" as GF
+participant "지표·로그\n(Metrics)" as MET
+
+activate RS
+
+RS -> RNG: 시드 고정 난수기 생성\nRandom(설정.random_seed)
+RS -> ENV: 환경 객체 생성\nEnvironment()
+RS -> MET: 빈 지표 객체 생성\nMetrics()
+RS -> GF: 자원·큐·프로세스 정의\nGunsanFactory(환경, 설정, 지표, 난수기)
+
+RS -> ENV: 입고 트럭 제너레이터 등록\nprocess(truck_inbound_generator)
+
+loop **선별 작업조 수(sorters)만큼**
+  RS -> ENV: 선별 워커 등록\nprocess(sort_worker)
+end
+
+loop **압착기 대수(press_machines)만큼**
+  RS -> ENV: 압착 워커 등록\nprocess(press_worker)
+end
+
+loop **반사로 대수(furnace_count)만큼**
+  RS -> ENV: 용해·주조 워커 등록\nprocess(furnace_worker)
+end
+
+RS -> ENV: 출하 트럭 제너레이터 등록\nprocess(outbound_truck_generator)
+
+RS -> ENV: 시뮬 종료 시각까지 실행\nrun(until=설정.sim_horizon_min)
+activate ENV
+note right of ENV
+  실행 중 각 프로세스가\n
+  입고·선별·압착·장입·용해·\n
+  주조·출하 사건을 발생시키고\n
+  지표에 기록\n(metrics.log)
+end note
+ENV --> RS: 시뮬레이션 종료
+deactivate ENV
+
+RS --> MET: 지표 객체 돌려줌
+deactivate RS
+
+@enduml
+
+
+@startuml streamlit_webapp_execution
+title **3. 웹 대시보드** — streamlit run webapp.py 호출 순서 (요약)
+
+actor "사용자" as U
+participant "스트림릿 런타임" as ST
+participant "웹 화면\n(webapp.py)" as UI
+participant "설정 조립\n(SimulationConfig)" as CFG
+participant "시뮬 실행\nrun_simulation" as RS
+participant "결과 분석\n(report.analyze)" as AN
+
+U -> ST: streamlit run webapp.py
+activate ST
+
+ST -> UI: 페이지 구성·접속 인증 여부 확인
+alt **로그인 전**
+  UI -> U: 비밀번호 입력 요청
+else **로그인 후**
+  UI -> U: 대시보드 본문 표시
+end
+
+loop **세션마다 화면 갱신**
+  UI -> U: 사이드바 슬라이더·공정 도식(Graphviz)
+end
+
+opt **사용자가 「시뮬레이션 실행」 클릭**
+  UI -> CFG: 입고·선별 등 서브설정 합쳐\n전체 SimulationConfig 생성
+  UI -> RS: 시뮬레이션 실행\nrun_simulation(설정)
+  activate RS
+  RS --> UI: 지표 객체(metrics)
+  deactivate RS
+  UI -> AN: 병목·차트용 분석\nanalyze(지표, 설정)
+  AN --> UI: 요약값·플롯 데이터
+  UI -> U: 핵심지표 카드·가동률·버퍼·간트 등 표시
+end
+
+@enduml

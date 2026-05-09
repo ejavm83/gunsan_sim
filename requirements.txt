@@ -3,3 +3,5 @@ ortools>=9.10
 matplotlib>=3.8
 plotly>=5.22
 streamlit>=1.30
+extra-streamlit-components>=0.1.71
+python-docx>=1.1.0

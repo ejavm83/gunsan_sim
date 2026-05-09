@@ -13,9 +13,19 @@ Streamlit 기반 인터랙티브 대시보드로, 브라우저에서 파라미�
 from __future__ import annotations
 
 import dataclasses
+import hashlib
+import json
+import os
+import re
 import time
+from io import BytesIO
+from pathlib import Path
+
+from docx import Document
 
 import streamlit as st
+import streamlit.components.v1 as components
+from extra_streamlit_components import CookieManager
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -31,7 +41,283 @@ from config import (
 from simulation import run_simulation
 from report import analyze, Analysis
 
-_BUILD_INFO_TEXT = "(주) 지엠티 김길용 수석, v0.0.1 (2026.05.06)"
+_BUILD_INFO_TEXT = "(주) 지엠티 김길용 수석, v0.0.2 (2026.05.09)"
+_REPO_ROOT = Path(__file__).resolve().parent
+_PROCESS_DETAIL_MD = _REPO_ROOT / "군산 공정 상세-김홍태보완.md"
+_SIMPY_CPSAT_MD = _REPO_ROOT / "docs" / "simpy_cpsat_overview.md"
+_TERMS_GLOSSARY_MD = _REPO_ROOT / "docs" / "terms_glossary.md"
+
+
+def _read_markdown_file(path: Path, default_text: str = "") -> str:
+    if not path.is_file():
+        return default_text
+    return path.read_text(encoding="utf-8")
+
+
+def _save_markdown_file(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # 서버 파일에 저장되므로 같은 서버를 보는 다른 사용자도 동일 내용을 확인할 수 있다.
+    path.write_text(content, encoding="utf-8")
+
+
+def _render_mermaid(chart: str, *, height: int = 420) -> None:
+    """호환성 이슈가 있어 Mermaid 원문은 접어두고 Graphviz로 렌더한다."""
+    _ = chart
+    _ = height
+
+
+def _render_graphviz_chart(dot_source: str, *, height: int = 420, fit: bool = True) -> None:
+    """브라우저 콘솔 worker 경고를 피하기 위해 d3-graphviz를 직접 렌더링한다."""
+    container_id = f"gv-{hashlib.md5(dot_source.encode('utf-8')).hexdigest()[:10]}"
+    dot_json = json.dumps(dot_source)
+    fit_js = "true" if fit else "false"
+    html = f"""
+<div id="{container_id}" style="width:100%; min-height:{height}px;"></div>
+<script src="https://unpkg.com/d3@7/dist/d3.min.js"></script>
+<script src="https://unpkg.com/@hpcc-js/wasm@2.20.0/dist/graphviz.umd.js"></script>
+<script src="https://unpkg.com/d3-graphviz@5/build/d3-graphviz.js"></script>
+<script>
+  const dot = {dot_json};
+  d3.select("#{container_id}")
+    .graphviz({{ useWorker: false, fit: {fit_js} }})
+    .renderDot(dot);
+</script>
+"""
+    components.html(html, height=height, scrolling=False)
+
+
+def _render_simpy_cpsat_overview_for_dashboard() -> None:
+    """docs/simpy_cpsat_overview.md 와 동일 요지를 웹 탭에 표시한다."""
+    st.markdown("---")
+    st.markdown("### SimPy · CP-SAT — 역할, 관계, 활용 시점")
+    st.markdown("""
+이 프로젝트는 **공장 전체 시간 흐름**을 **SimPy**로 재현하고, 터미널(`python main.py`)에서만
+선택적으로 **반사로 배치 스케줄**을 **CP-SAT**로 최적화해 **이론적 메이크스팬**과 비교합니다.
+두 도구는 **역할이 다르고**, **이 대시보드 버튼으로 돌리는 시뮬은 SimPy만** 해당합니다.
+    """)
+
+    st.markdown("""
+| 구분 | SimPy | CP-SAT (본 저장소에서의 쓰임) |
+|------|--------|------------------------------|
+| **본질** | 이산사건 시뮬: 자원·버퍼·확률 출하까지 **시간 순서 재현** | 제약+최적화: 배치를 두 반사로에 어떻게 넣으면 **전체 완료가 가장 빠른지** 정수계획으로 풂 |
+| **여기서 얻는 것** | 이벤트·KPI·버퍼 **동역학** | 배치 시작 시각표·**최소 메이크스팬**(수학 모델 해) |
+| **반사로 2대** | `Resource` **선착순** 근사 | 반사로별 **겹침 없이** 시작 시각 **최적화** |
+| **실행 위치** | `run_simulation()` — **웹·CLI 공통** | **`main.py`만** (기본 켜짐, `--no-optimize` 로 끔). **웹 버튼과 연동 안 됨** |
+| **코드** | `simulation.py`, `metrics.py` | `optimizer.py`, `main.py` |
+    """)
+
+    st.info(
+        "**이 화면의 KPI·차트**는 모두 SimPy 결과입니다. "
+        "CP-SAT 스케줄·메이크스팬 비교는 저장소에서 `python main.py` 로 실행하세요 "
+        "(웹에 붙이려면 별도 연동 개발이 필요합니다)."
+    )
+    if _SIMPY_CPSAT_MD.is_file():
+        st.caption(f"상세 전문: 저장소 `{_SIMPY_CPSAT_MD.relative_to(_REPO_ROOT)}`")
+
+    with st.expander("그림 1 — SimPy(항상)와 CP-SAT(CLI 선택) 역할 분담", expanded=True):
+        st.caption("왼쪽: 시간축 시뮬 / 오른쪽: 배치 단위로 반사로만 재스케줄")
+        _render_graphviz_chart(
+            r"""
+digraph G {
+  rankdir=LR;
+  graph [pad=0.2, nodesep=0.4, ranksep=0.6];
+  node [shape=box, style="rounded,filled", fillcolor="#f8fafc", color="#475569", fontname="Malgun Gothic"];
+
+  Cfg [label="설정 입력\nSimulationConfig\n(config.py)"];
+  S1 [label="GunsanFactory\n자원·Store·프로세스", fillcolor="#e8f5e9"];
+  S2 [label="env.run()\n버퍼·출하 간격 포함", fillcolor="#e8f5e9"];
+  S3 [label="Metrics\n이벤트·대기·처리량", fillcolor="#e8f5e9"];
+  R1 [label="배치 시작 후보 시각\n(이벤트 또는 추정)", fillcolor="#fff3e0"];
+  R2 [label="estimate_batch_duration\n배치 1건 길이(분)", fillcolor="#fff3e0"];
+  R3 [label="solve_furnace_schedule\n메이크스팬 최소화", fillcolor="#fff3e0"];
+  R4 [label="콘솔 스케줄·메이크스팬", fillcolor="#fff3e0"];
+
+  Cfg -> S1;
+  S1 -> S2 -> S3;
+  S3 -> R1 [label="press/pallet_done 실측"];
+  Cfg -> R1 [label="실측 없으면 근사"];
+  Cfg -> R2;
+  R1 -> R3;
+  R2 -> R3;
+  R3 -> R4;
+}
+"""
+        )
+
+    with st.expander("그림 2 — `python main.py` 실행 순서(요약)", expanded=False):
+        _render_graphviz_chart(
+            r"""
+digraph G {
+  rankdir=TB;
+  graph [pad=0.2, nodesep=0.35, ranksep=0.45];
+  node [shape=box, style="rounded,filled", fillcolor="#f8fafc", color="#475569", fontname="Malgun Gothic"];
+
+  Start [shape=oval, label="python main.py"];
+  Sim [label="SimPy 실행\nrun_simulation"];
+  KPI [label="요약 출력\nmetrics.summary"];
+  Branch [shape=diamond, label="--no-optimize ?"];
+  CP [label="CP-SAT\nestimate + solve"];
+  Skip [label="CP 단계 생략"];
+  Compare [label="시뮬 batch_done 최대 시각과\n메이크스팬 비교 출력"];
+  Post [shape=diamond, label="후속 옵션"];
+  E [label="--events CSV"];
+  P [label="matplotlib 차트"];
+  A [label="--animate"];
+  R [label="--report HTML"];
+  End [shape=oval, label="종료"];
+
+  Start -> Sim -> KPI -> Branch;
+  Branch -> CP [label="아니오"];
+  Branch -> Skip [label="예"];
+  CP -> Compare -> Post;
+  Skip -> Post;
+  Post -> E;
+  Post -> P;
+  Post -> A;
+  Post -> R;
+  E -> End;
+  P -> End;
+  A -> End;
+  R -> End;
+}
+"""
+        )
+
+    with st.expander("그림 3 — 직관 비유 (도로 전체 vs 관제 순서만)", expanded=False):
+        _render_graphviz_chart(
+            r"""
+digraph G {
+  rankdir=LR;
+  graph [pad=0.2, nodesep=0.4, ranksep=0.6];
+  node [shape=box, style="rounded,filled", fillcolor="#f8fafc", color="#475569", fontname="Malgun Gothic"];
+
+  SIM [label="SimPy\n신호등·차선·합류\n무작위 교통량까지", fillcolor="#e8f5e9"];
+  OPT [label="CP-SAT\n관제에서\n간선 순서만 최적화", fillcolor="#fff3e0"];
+  DIFF [shape=oval, label="다름", fillcolor="#fee2e2", color="#b91c1c"];
+
+  SIM -> DIFF [style=dashed, label="같은 노선이라도\n전체 재현은 다름"];
+  OPT -> DIFF [style=dashed, label="배치=노선\n반사로=차선 2개"];
+}
+"""
+        )
+
+    with st.expander("SimPy — 이 화면에서 하는 일 / 하지 않는 일", expanded=False):
+        st.markdown("""
+- **언제:** **시뮬레이션 실행** 버튼을 누를 때마다 `run_simulation()` 이 돌아갑니다.
+- **하는 일:** 입고 스케줄, 출하 **지수분포** 간격, 계근대 **공유**, `Resource`·`Store` 로 **대기·버퍼 정지** 등을 시간순으로 재현합니다.
+- **하지 않는 일:** 반사로에 배치를 **전역 최적으로 배정**하지는 않고, SimPy `Resource` 의 **선착순** 규칙에 가깝게 동작합니다.
+        """)
+
+    with st.expander("CP-SAT — 터미널에서 하는 일 / 시뮬과의 차이", expanded=False):
+        st.markdown("""
+- **언제:** `python main.py` 이며 **`--no-optimize` 가 없을 때** `optimizer` 가 호출됩니다.
+- **입력:** 배치당 **시작 가능 시각(release)** 은 시뮬 이벤트(`press`/`pallet_done`) 우선, 없으면 **추정식**(`estimate_batch_releases`) — 추정은 대기열·버퍼를 단순화해 **시뮬과 어긋날 수 있음**.
+- **주의:** 솔버가 내는 시작 시각표는 **SimPy를 다시 돌린 결과가 아니라**, “반사로 두 대만 최적으로 돌린다면”에 대한 **수학 모델의 해**입니다. 격차는 **선착순 근사 vs 순서 최적**의 차이로 읽으면 됩니다.
+        """)
+
+
+def _paragraph_add_markdown_bold(paragraph, text: str) -> None:
+    """문단에 `**굵게**` 구간을 반영해 run을 추가한다."""
+    parts = re.split(r"(\*\*[^*]+?\*\*)", text)
+    for part in parts:
+        if part.startswith("**") and part.endswith("**") and len(part) >= 4:
+            run = paragraph.add_run(part[2:-2])
+            run.bold = True
+        else:
+            paragraph.add_run(part)
+
+
+def _markdown_lines_to_docx(md_text: str) -> bytes:
+    doc = Document()
+    doc.add_heading("군산 공장 하이브리드 공정 상세", 0)
+    doc.add_paragraph("출처: 저장소 `군산 공정 상세-김홍태보완.md`")
+    for raw in md_text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("# "):
+            doc.add_heading(line[2:].strip(), level=1)
+        elif line.startswith("## "):
+            doc.add_heading(line[3:].strip(), level=2)
+        elif line.startswith("- "):
+            p = doc.add_paragraph(style="List Bullet")
+            _paragraph_add_markdown_bold(p, line[2:].strip())
+        else:
+            p = doc.add_paragraph()
+            _paragraph_add_markdown_bold(p, line)
+    buf = BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+@st.cache_data(show_spinner=False)
+def _process_detail_docx_bytes(source_mtime_ns: int) -> bytes:
+    """공정 상세 마크다운을 Word(.docx) 바이너리로 변환."""
+    md = _PROCESS_DETAIL_MD.read_text(encoding="utf-8")
+    return _markdown_lines_to_docx(md)
+
+
+def _process_detail_docx_download() -> tuple[bytes, str] | None:
+    if not _PROCESS_DETAIL_MD.is_file():
+        return None
+    mtime_ns = _PROCESS_DETAIL_MD.stat().st_mtime_ns
+    return _process_detail_docx_bytes(mtime_ns), "군산_공정_상세.docx"
+
+
+def _render_glossary_page() -> None:
+    """웹 대시보드 용어·약어 페이지(파일 기반 + 편집)."""
+    st.subheader("📚 용어 및 약어")
+    st.caption(
+        f"원본 파일: `{_TERMS_GLOSSARY_MD.relative_to(_REPO_ROOT)}`. "
+        "저장하면 같은 서버를 보는 다른 사용자도 즉시 같은 내용을 확인할 수 있습니다."
+    )
+    if not _TERMS_GLOSSARY_MD.is_file():
+        st.warning(
+            f"`{_TERMS_GLOSSARY_MD.relative_to(_REPO_ROOT)}` 파일이 없어 기본 템플릿을 표시합니다. "
+            "편집 후 저장하면 파일이 생성됩니다."
+        )
+    glossary_md = _read_markdown_file(
+        _TERMS_GLOSSARY_MD,
+        default_text=(
+            "# 용어 및 약어\n\n"
+            "아래 내용을 Markdown으로 자유롭게 편집하세요.\n\n"
+            "## 약어\n"
+            "- SCR: South Wire Rod\n"
+            "- DES: Discrete Event Simulation\n"
+            "- CP-SAT: Constraint Programming + SAT\n"
+        ),
+    )
+    st.markdown(glossary_md)
+
+    with st.expander("✍️ 용어/약어 편집", expanded=False):
+        edited_glossary_md = st.text_area(
+            "용어/약어 Markdown",
+            value=glossary_md,
+            height=520,
+            key="terms_glossary_editor",
+        )
+        if st.button("💾 용어/약어 저장", type="primary", key="save_terms_glossary"):
+            _save_markdown_file(_TERMS_GLOSSARY_MD, edited_glossary_md)
+            st.success("용어/약어 내용을 저장했습니다. 다른 사용자도 새로고침 후 동일 내용을 볼 수 있습니다.")
+            st.rerun()
+
+
+# 접근 제어(로그인 페이지)
+_ACCESS_PASSWORD = "6501"
+_DASHBOARD_AUTH_COOKIE = "gunsan_scr_dashboard"
+_DASHBOARD_AUTH_TOKEN = hashlib.sha256(_ACCESS_PASSWORD.encode()).hexdigest()
+_COOKIE_CM_KEY = "gunsan_dashboard_cookie_mgr"
+_ENABLE_PASSWORD_AUTH = os.getenv("GUNSAN_ENABLE_PASSWORD_AUTH", "0") == "1"
+
+
+def _auth_cookie_manager() -> CookieManager:
+    """매 rerun마다 새 인스턴스를 만든다.
+
+    `CookieManager` 는 내부에서 Streamlit 커스텀 컴포넌트를 호출하기 때문에
+    `@st.cache_resource` 로 감싸면 ``CachedWidgetWarning`` 이 발생한다.
+    컴포넌트는 ``key`` 기준으로 dedup 되므로 매 rerun 재생성해도 안전하다.
+    """
+    return CookieManager(key=_COOKIE_CM_KEY)
 
 
 def _build_process_graphviz(
@@ -338,24 +624,54 @@ st.set_page_config(
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
-if not st.session_state.authenticated:
-    st.title("🔒 접근 제한")
-    st.write("비밀번호를 입력해야 대시보드에 접속할 수 있습니다.")
-    password_input = st.text_input("비밀번호", type="password", placeholder="비밀번호 입력")
-    if st.button("접속", type="primary"):
-        if password_input == "6501":
-            st.session_state.authenticated = True
-            st.rerun()
-        else:
-            st.error("비밀번호가 올바르지 않습니다.")
-    st.stop()
+if _ENABLE_PASSWORD_AUTH:
+    _cookie_mgr = _auth_cookie_manager()
+    _cookie_val = _cookie_mgr.get(_DASHBOARD_AUTH_COOKIE)
+    if (
+        not st.session_state.authenticated
+        and _cookie_val == _DASHBOARD_AUTH_TOKEN
+    ):
+        st.session_state.authenticated = True
+
+    if (
+        not st.session_state.authenticated
+        and not st.session_state.get("_auth_cookie_bridge_done")
+    ):
+        st.session_state._auth_cookie_bridge_done = True
+        st.rerun()
+
+    if not st.session_state.authenticated:
+        st.title("🔒 접근 제한")
+        st.write("비밀번호를 입력해야 대시보드에 접속할 수 있습니다.")
+        password_input = st.text_input("비밀번호", type="password", placeholder="비밀번호 입력")
+        if st.button("접속", type="primary"):
+            if password_input == _ACCESS_PASSWORD:
+                st.session_state.authenticated = True
+                _cookie_mgr.set(
+                    _DASHBOARD_AUTH_COOKIE,
+                    _DASHBOARD_AUTH_TOKEN,
+                    key="gunsan_auth_cookie_set",
+                    max_age=365.25 * 24 * 3600,
+                    path="/",
+                    same_site="lax",
+                )
+                st.rerun()
+            else:
+                st.error("비밀번호가 올바르지 않습니다.")
+        st.stop()
+else:
+    st.session_state.authenticated = True
 
 # ---------------------------------------------------------------------------
 # 사이드바 - 파라미터 입력
 # ---------------------------------------------------------------------------
 
 st.sidebar.title("🏭 시뮬레이션 파라미터")
-st.sidebar.caption("ℹ️ 각 항목 위에 마우스를 올리면 상세 설명이 표시됩니다.")
+st.sidebar.caption(
+    "📄 **상세 문서**: 저장소의 `docs/simulation_inputs_constraints.md` — "
+    "입력 출처, 고정·미사용 필드, 모델 제약(CP-SAT 포함)을 표로 정리했습니다."
+)
+st.sidebar.caption("ℹ️ 각 슬라이더에 마우스를 올리면 해당 항목 설명이 표시됩니다.")
 run_button = st.sidebar.button(
     "🚀 시뮬레이션 실행", type="primary", use_container_width=True,
     help="""▶️ **시뮬레이션 실행**
@@ -642,9 +958,10 @@ flake_ratio = st.sidebar.slider(
 - 주조 속도: 약 4톤/10분
 
 **비율 설정 가이드:**
-- 50/50: 균형 생산 (기본값)
-- 70/30: 퓨플레이크 수요 높을 때
-- 30/70: SCR 수요 높을 때
+- 코드·문서 기본값: 퓨플레이크 **30%** / SCR **70%** (3:7)
+- 50/50: 두 품목 수요가 비슷할 때
+- 퓨 비중을 높일 때: 예) 70/30
+- SCR 비중을 높일 때: 예) 10/90
 
 **주의사항:**
 - 두 라인 병렬 운영 (동시 주조)
@@ -709,8 +1026,45 @@ st.markdown("""
 5단계 공정을 SimPy 이산사건 시뮬레이션으로 모델링합니다.
 **왼쪽 사이드바에서 파라미터를 조정**한 뒤 **시뮬레이션 실행** 버튼을 누르세요.
 """)
+if run_button:
+    st.session_state.gunsan_main_page = "시뮬레이션"
+_main_page = st.radio(
+    "페이지",
+    ["시뮬레이션", "용어 및 약어"],
+    horizontal=True,
+    key="gunsan_main_page",
+)
+if _main_page == "용어 및 약어":
+    _render_glossary_page()
+    st.stop()
+
+with st.expander("📖 입력·출처·모델 제약 (요약)", expanded=False):
+    st.markdown(
+        """
+#### 단위·근거
+- **시간**: 분(min), **중량**: 톤(t). 도메인 근거는 `군산 공정 상세-김홍태보완.md`, 수치 기본값은 `config.py` 의 `DEFAULT_CONFIG`와 동일하게 맞춰 두었습니다.
+
+#### 이 화면에서 바꿀 수 있는 것
+- **일수**, **입고**(일일 대수·적재 t·하역 베이 수), **선별/압착**(선별 조·압착기·파레트 버퍼 용량), **용해/주조**(반사로 대수·배치 t·퓨 비율), **출하**(빈 트럭 평균 도착 간격).
+- **고정(슬라이더 없음)** 예: 계근 5분·하역 20분·선별 30분/트럭·압착(서브 더미당 0.5t 블록 5개, 사이클당 5+1.5+2분)·12h 용해·엘리베이터 2파레트/10분·홀딩 셋업·퓨·SCR 단위 속도·완제품 버퍼(퓨 100단위·SCR 75단위) 등 → 전부 `config.py` 에서 변경합니다.
+- **배치 t → 파레트 수**: 웹에서는 `파레트 수 = int(배치 t ÷ 2.5)` 로 계산합니다(2.5 t/파레트 고정).
+
+#### 모델이 강제하는 제약
+- **계근대**는 입고·출하 트럭이 **같은 자원**을 공유합니다.
+- **파레트/퓨/SCR 버퍼**가 가득 차면 앞 단 공정 또는 주조 라인이 **대기(bloking)** 할 수 있습니다.
+- 반사로는 **파레트가 배치 분량만큼** 모였을 때만 배치를 시작합니다.
+- 출하 트럭은 재고 확보를 **최대 4시간**까지 기다린 뒤, 채워진 만큼만 실고 출발합니다.
+- 빈 트럭 간격은 **지수분포**(평균 = 설정 분), 차종은 **퓨 비율**과 같은 확률로 flake/scr을 고릅니다.
+
+#### 코드·문서 불일치·미사용(참고)
+- 설정에 있는 `pile_size_ton`, `forklifts`, `max_batch_ton` 등은 현재 시뮬 레이어에서 **참조되지 않을 수** 있습니다. 상세 표는 저장소 **`docs/simulation_inputs_constraints.md`** 를 보세요.
+
+#### CLI
+- 터미널에서는 `python main.py --days N --seed S` 로 기간·난수만 바꿀 수 있습니다. CP-SAT 비교는 `main.py` 에 포함되어 있습니다 (`--no-optimize` 로 생략 가능).
+        """
+    )
 st.subheader("🧭 세부공정 프로세스")
-st.graphviz_chart(
+_render_graphviz_chart(
     _build_process_graphviz(
         trucks_per_day=trucks_per_day,
         payload_ton=payload_ton,
@@ -718,7 +1072,7 @@ st.graphviz_chart(
         furnace_count=furnace_count,
         bottleneck=None,
     ),
-    use_container_width=True,
+    fit=True,
 )
 if run_button:
     # 설정 조립
@@ -840,7 +1194,7 @@ if run_button:
         **일반적인 병목 순서:** 반사로 용해 > 압착기 > 하역장 > 선별
         """)
     st.error(f"**식별된 병목: {analysis.bottleneck}** — {analysis.bottleneck_reason}")
-    st.graphviz_chart(
+    _render_graphviz_chart(
         _build_process_graphviz(
             trucks_per_day=trucks_per_day,
             payload_ton=payload_ton,
@@ -848,7 +1202,7 @@ if run_button:
             furnace_count=furnace_count,
             bottleneck=analysis.bottleneck,
         ),
-        use_container_width=True,
+        fit=True,
     )
     # 공정 흐름 카드
     stages = [
@@ -1209,204 +1563,24 @@ else:
 
     with tab2:
         st.markdown("## 군산 공장 하이브리드 공정 상세")
-        st.markdown("""
-        스크랩 구리 입고부터 완제품 출하까지 5단계에 이르는 군산 공장의 모든 상세 공정 흐름을 설명합니다.
-        """)
+        st.markdown("스크랩 구리 입고부터 완제품 출하까지 5단계 공정의 상세 설명입니다.")
+        process_md = _read_markdown_file(_PROCESS_DETAIL_MD)
+        if process_md:
+            st.markdown(process_md)
+        else:
+            st.warning("공정 상세 파일이 비어 있습니다. 아래 편집기에서 내용을 작성해 저장해 주세요.")
 
-        # 1. 스크랩 구리 입고 및 하역 공정
-        st.markdown("---")
-        st.markdown("### 1. 스크랩 구리 입고 및 하역 공정")
-        st.markdown("""
-        군산 공장의 하이브리드 공정 중 첫 번째 단계인 **스크랩 구리 입고 및 하역 공정**은 다음과 같은 순서로 진행됩니다.
-        """)
-
-        col1_1, col1_2 = st.columns([1, 1])
-        with col1_1:
-            st.markdown("""
-            **① 트럭 입고 및 대기**
-            - 하루에 약 **10대의 트럭**이 각각 **20톤의 스크랩 구리**를 싣고 공장에 도착
-            - 순수한 구리뿐만 아니라 철이나 쓰레기 등 여러 이물질이 섞인 스크랩이 실림
-            - 시뮬레이션에서는 병목 현상 방지를 위해 **오전 10시부터 1시간 간격**으로 도착하도록 스케줄링
-
-            **② 1차 계근 및 중량 측정**
-            - 공장 진입 시 계근대를 거쳐 적재된 스크랩 구리의 중량 측정
-            - 서류상 물량(20톤)과 실제 중량 일치 여부 확인
-            - 계근대 대기 및 측정 시간: **약 5분**
-            """)
-        with col1_2:
-            st.markdown("""
-            **③ 지정 공간 하역 작업 (쏟아 붓기)**
-            - 1차 계근 후 지정된 하역 공간으로 이동하여 스크랩 구리를 바닥에 쏟아 붓기
-            - 바닥에 부어진 스크랩은 **약 5×5 크기의 산더미 형태**로 쌓임
-            - 하역 작업 시간: **약 20분**
-            - 두 대 동시 하역 가능하도록 한 공간 추가 마련
-
-            **④ 2차 계근(영점 확인) 및 빈 차 출차**
-            - 하역 완료 후 다시 계근대를 거쳐 **적재 중량 0kg 확인**
-            - 부당한 물량 반출 사고 방지 목적
-            - 영점 확인 후 빈 트럭 출차, 계근 대기 시간: **약 5분**
-            """)
-
-        st.info("💡 계근 → 하역 → 재계근 → 출차의 과정이 하루 10대의 차량에 걸쳐 지속적으로 반복되면서 본격적인 공정의 원료가 수급됩니다.")
-
-        # 2. 선별 및 압착 공정
-        st.markdown("---")
-        st.markdown("### 2. 선별 및 압착 공정")
-        st.markdown("""
-        두 번째 단계인 **선별 및 압착 공정**은 스크랩 구리의 불순물을 제거하고 
-        다음 공정인 용해로 투입을 위해 부피를 압축하는 핵심 단계입니다.
-        """)
-
-        col2_1, col2_2 = st.columns([1, 1])
-        with col2_1:
-            st.markdown("""
-            **① 이물질 선별 및 크기 축소 (정리 작업)**
-            - 5×5 크기의 스크랩 더미에서 이물질(철, 쓰레기 등) 선별 제거
-            - 구리 덩어리들을 **2×5 사이즈로 길게** 정리
-            - 선별 및 정리 작업 시간: **약 30분**
-            - 20톤의 구리에서 **총 8개의 더미** 생성
-
-            **② 압착기 투입 대기**
-            - 지게차를 이용해 **한 번에 0.5톤(500kg)** 분량씩 압착기에 투입
-            - 지게차 준비 시간: **약 5분**
-            """)
-        with col2_2:
-            st.markdown("""
-            **③ 압착 작업 (프레스)**
-            - 압착기가 스크랩 구리를 강하게 눌러 부피를 줄인 블록 형태로 제작
-            - **0.5톤짜리 덩어리 1개** 압착 완성 시간: **90초**
-
-            **④ 파레트 적재 및 버퍼 공간 보관**
-            - 압착된 덩어리들을 지게차로 파레트 위에 적재
-            - **적재 기준:** 0.5톤 × 5개 = **2.5톤/파레트**
-            - 덩어리 1개 적재 시간: **약 2분**
-            - 야적장 최대 용량: **2일치(파레트 160개)**
-            """)
-
-        # 3. 장입 및 용해 공정
-        st.markdown("---")
-        st.markdown("### 3. 장입 및 용해 공정 ⚠️ 핵심 병목")
-        st.error("⚠️ **주의**: 이 공정은 전체 물류 흐름의 가장 핵심적인 병목(Bottleneck) 구간입니다.")
-        st.markdown("""
-        앞선 공정에서 완성된 파레트들이 버퍼 공간에 모두 모인 후부터 본격적으로 시작됩니다.
-        """)
-
-        col3_1, col3_2 = st.columns([1, 1])
-        with col3_1:
-            st.markdown("""
-            **① 엘리베이터 운송 및 장입 (Charging)**
-            - 버퍼의 2.5톤 파레트들을 **총 80톤(32개)까지** 용해로로 이동
-            - **산업용 엘리베이터**(최대 5~10톤 하중)로 파레트 운송
-            - 안전을 위해 **1회당 2개 파레트(5톤)만** 적재
-            - 엘리베이터 왕복 1사이클: **약 10분**
-            - 80톤 전체 운송에 수 시간 소요
-
-            **② 사전 준비 작업**
-            - 지게차로 파레트를 용해로(반사로)에 투입
-            - 장비 셋업 및 구리 안정화 대기: **약 2시간**
-            """)
-        with col3_2:
-            st.markdown("""
-            **③ 12시간 용해 (Melting) - 최대 병목 지점**
-            - 80톤의 스크랩 구리를 완전히 쇳물로 녹이는 시간: **정확히 12시간**
-            - 이 시간 동안 새로운 물량 투입 불가
-            - 앞단 공정 생산물은 버퍼에 대기
-            - **전체 시뮬레이션의 가장 주요한 병목 기준 시간**
-
-            **🔧 연속 생산 및 설비 유연성**
-            - 공장에 반사로 **2개** 보유
-            - 하나가 용해 중일 때 다른 반사로에 장입/예열 준비 가능
-            - **최대 200톤**까지 연속 투입 가동 가능
-            """)
-
-        # 4. 하이브리드 제품 생산 공정
-        st.markdown("---")
-        st.markdown("### 4. 하이브리드 제품 생산 공정 (주조/압연/권취)")
-        st.markdown("""
-        군산 공장의 가장 큰 특징인 **'하이브리드 공정'**이 본격적으로 이루어지는 단계입니다.
-        12시간 동안 끓인 쇳물을 **두 가지 형태의 제품**으로 뽑아냅니다.
-        """)
-
-        col4_1, col4_2 = st.columns([1, 1])
-        with col4_1:
-            st.markdown("""
-            **① 생산 셋업 및 대기 (홀딩로 이동)**
-            - 용해 완료 후 사전 준비(셋업): **약 1~2시간**
-            - 쇳물을 용해로(반사로)에서 대기로(홀딩로)로 이동
-
-            **② 라인 분기 (하이브리드 교차 생산)**
-            - 동일한 쇳물에서 **2가지 제품 선택적 생산** 가능
-            - 홀딩로 출구 경로 조절로 라인 선택
-            - **생산 비율: 퓨플레이크 30% : SCR 코일 70%** (기본값)
-            """)
-        with col4_2:
-            st.markdown("""
-            **③ 퓨플레이크 (Cu-flake) 생산**
-            - 끓는 쇳물에 찬물을 쏘아 순간 응축
-            - 시리얼(콘프레이크)처럼 구리 조각 생성
-            - 포대자루에 담아 포장
-            - **생산 속도: 2.5분당 1톤(포대 1개)**
-
-            **④ SCR 코일 (구리선) 생산**
-            - 쇳물을 주조식으로 길게 뽑아 구리선 제작
-            - 둥글게 감아 거대한 코일 형태로 제작
-            - **생산 속도: 10분당 4톤(코일 1개)**
-            """)
-
-        st.success("""
-        **📅 총 24시간 사이클 완성**
-        - 장입 전 준비 (약 2시간) → 용해 (12시간) → 주조 셋업 및 실제 생산 (약 10시간)
-        - 최대 200톤 분량의 쇳물을 두 가지 제품으로 전부 뽑아내는 실제 오퍼레이션 타임: **약 8시간**
-        """)
-
-        # 5. 완제품 야적 및 출하 공정
-        st.markdown("---")
-        st.markdown("### 5. 완제품 야적 및 출하 공정")
-        st.markdown("""
-        군산 공장 하이브리드 시뮬레이션의 마지막 단계입니다.
-        """)
-
-        col5_1, col5_2 = st.columns([1, 1])
-        with col5_1:
-            st.markdown("""
-            **① 완제품 이동 및 버퍼(야적장) 보관**
-            - 퓨플레이크 포대(1톤)와 SCR 코일(4톤)을 지게차로 야적장 이동
-            - 시각적 구분: **퓨플레이크=파란색, SCR 코일=빨간색**
-            - 야적장 용량: **약 2일치(총 400톤)**
-              - 퓨플레이크: 100포대(100톤)
-              - SCR 코일: 75개(300톤)
-
-            **② 빈 트럭 입고 및 1차 계근 (영점 확인)**
-            - 완제품 반출을 위한 빈 트럭 입고
-            - 계근대에서 **적재 중량 0kg 확인**
-            """)
-        with col5_2:
-            st.markdown("""
-            **③ 지게차 상차 작업**
-            - 영점 확인 후 야적장에서 완제품 상차
-            - 트럭 1대당 **최대 20~25톤** 적재
-            - 시뮬레이션에서 20톤 기준 출하 설정
-
-            **④ 2차 계근 및 최종 출하**
-            - 상차 완료 후 2차 중량 측정
-            - 서류상 지정된 중량(20~25톤) 정확성 확인
-            - 부당 반출 방지 최종 검증
-            - 확인 완료 후 납품처로 출발
-            """)
-
-        st.info("🎉 이로써 스크랩 구리 입고부터 최종 완제품 출하까지 1~5단계에 이르는 군산 공장의 모든 상세 공정 흐름이 완료됩니다.")
-
-        # 전체 공정 요약 표
-        st.markdown("---")
-        st.markdown("### 📊 전체 공정 요약")
-        process_summary = [
-            {"단계": "1. 입고/하역", "핵심 활동": "트럭 입고 → 계근 → 하역 → 출차", "주요 시간": "계근 5분, 하역 20분"},
-            {"단계": "2. 선별/압착", "핵심 활동": "이물질 선별 → 압착 → 파레트 적재", "주요 시간": "선별 30분, 압착 90초/0.5톤"},
-            {"단계": "3. 장입/용해", "핵심 활동": "엘리베이터 운송 → 장입 → 용해", "주요 시간": "준비 2시간, 용해 12시간 ⚠️"},
-            {"단계": "4. 제품 생산", "핵심 활동": "홀딩로 이동 → 퓨플레이크/SCR 주조", "주요 시간": "셋업 1~2시간, 생산 8시간"},
-            {"단계": "5. 야적/출하", "핵심 활동": "야적장 보관 → 상차 → 계근 → 출하", "주요 시간": "트럭당 20~25톤 출하"},
-        ]
-        st.table(process_summary)
+        with st.expander("✍️ 공정 상세 편집", expanded=False):
+            edited_process_md = st.text_area(
+                "공정 상세 Markdown",
+                value=process_md,
+                height=620,
+                key="process_detail_editor",
+            )
+            if st.button("💾 공정 상세 저장", type="primary", key="save_process_detail"):
+                _save_markdown_file(_PROCESS_DETAIL_MD, edited_process_md)
+                st.success("공정 상세를 저장했습니다. 다른 사용자도 새로고침 후 동일 내용을 확인할 수 있습니다.")
+                st.rerun()
 
     with tab3:
         st.markdown("## 시뮬레이션 방법론 및 사용 라이브러리")
@@ -1414,6 +1588,8 @@ else:
         본 시뮬레이션은 **학술적으로 검증된 방법론**과 **산업 표준 라이브러리**를 활용하여
         결과의 신뢰성과 재현성을 보장합니다.
         """)
+
+        _render_simpy_cpsat_overview_for_dashboard()
 
         # SimPy 설명
         st.markdown("---")

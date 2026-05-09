@@ -10,6 +10,10 @@
 
 ```
 gunsan_sim/
+├── docs/
+│   ├── simulation_inputs_constraints.md  # 시뮬 입력·제약·도출 항목 문서
+│   ├── simpy_cpsat_overview.md           # SimPy vs CP-SAT 역할·활용 시점 (Mermaid)
+│   └── execution_flow_sequence.puml      # 전체 구동 순서 PlantUML 순차 다이어그램
 ├── config.py           # 모든 시간/용량 파라미터(문서 기준값) 정의
 ├── metrics.py          # 이벤트 로깅 및 KPI 산출
 ├── simulation.py       # SimPy 5단계 공정 모델
@@ -24,6 +28,14 @@ gunsan_sim/
 ├── requirements.txt
 └── README.md
 ```
+
+## 시뮬레이션 입력·제약 문서
+
+도메인 문서(`군산 공정 상세-김홍태보완.md`)와 코드 파라미터의 대응, SimPy 모델이 강제하는 제약, 웹 대시보드에서 조정 가능한 항목, CP-SAT 보조 모듈의 가정은 **[docs/simulation_inputs_constraints.md](docs/simulation_inputs_constraints.md)** 에 정리되어 있다.
+
+**SimPy 와 CP-SAT:** 무엇이 다른지·언제 쓰이는지(웹은 SimPy만, CLI에서 CP-SAT 선택) 요약 및 Mermaid 도식은 **[docs/simpy_cpsat_overview.md](docs/simpy_cpsat_overview.md)** 를 본다.
+
+**구동 절차(순차 다이어그램):** CLI `main.py`, `run_simulation` 내부(SimPy 프로세스 등록), Streamlit `webapp.py` 흐름은 **[docs/execution_flow_sequence.puml](docs/execution_flow_sequence.puml)** 에 PlantUML(`@startuml` 3개)로 수록했다. [PlantUML](https://plantuml.com/) CLI 또는 IDE 확장으로 PNG/SVG로 내보내면 된다.
 
 ## 설치
 
