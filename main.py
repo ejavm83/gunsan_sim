@@ -11,11 +11,30 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+
+def _running_as_streamlit_main() -> bool:
+    """`streamlit run main.py`처럼 이 파일이 웹 엔트리로 잡힌 경우(Cloud 오설정 대비)."""
+    try:
+        from streamlit.runtime.scriptrunner_utils.script_run_context import (
+            get_script_run_ctx,
+        )
+    except ImportError:
+        return False
+    ctx = get_script_run_ctx(suppress_warning=True)
+    if ctx is None:
+        return False
+    try:
+        return Path(ctx.main_script_path).resolve() == Path(__file__).resolve()
+    except OSError:
+        return False
+
+
 import argparse
 import csv
 import dataclasses
-import sys
-from pathlib import Path
 
 # Windows PowerShell 환경에서도 한글이 깨지지 않도록 stdout 을 UTF-8 로 재설정
 try:  # Python 3.7+
@@ -273,4 +292,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    if _running_as_streamlit_main():
+        import webapp  # noqa: E402, F401 — 대시보드만 로드 (CLI `main()` 호출 안 함)
+    else:
+        main()
