@@ -23,11 +23,17 @@ from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 
+import streamlit as st
+
+st.set_page_config(
+    page_title="SCR공정 물류 시뮬레이션",
+    page_icon="🏭",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
 import pandas  # noqa: F401 — plotly가 부분 초기화된 pandas를 보지 않도록 먼저 로드
 
-from docx import Document
-
-import streamlit as st
 import streamlit.components.v1 as components
 from extra_streamlit_components import CookieManager
 import plotly.graph_objects as go
@@ -51,7 +57,6 @@ from report import (
     layperson_interpretation_export_markdown,
     layperson_interpretation_markdown,
 )
-from pdf_report import markdown_simulation_report_to_pdf
 
 APP_VERSION = "0.0.3"
 APP_RELEASE_DATE = "2026.05.13"
@@ -1161,6 +1166,8 @@ def _markdown_lines_to_docx(
     `#`, `##`, `###` 헤딩, ``-``/``*`` 글머리, 굵게(별표 두 개) 마크업 정도만 지원한다.
     표·이미지 등은 평문으로 들어가지만, 본 프로젝트 문서는 대부분 이 규칙으로 충분히 가독성을 유지한다.
     """
+    from docx import Document  # noqa: PLC0415 — Streamlit Cloud 첫 로드 시 무거운 의존성 지연
+
     doc = Document()
     doc.add_heading(title, 0)
     if source_label:
@@ -1875,17 +1882,6 @@ def _build_process_timeline_figure(
         font=dict(size=12, color="#334155"),
     )
     return fig
-
-# ---------------------------------------------------------------------------
-# 페이지 설정
-# ---------------------------------------------------------------------------
-
-st.set_page_config(
-    page_title="SCR공정 물류 시뮬레이션",
-    page_icon="🏭",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
 
 # ---------------------------------------------------------------------------
 # 접근 제어
@@ -2744,6 +2740,8 @@ if _gunsan_show_results and _main_page == "시뮬레이션":
             help="KPI·해석·병목·표·인사이트·(현재 필터와 동일한) 사건 로그. Plotly 차트는 제외.",
         )
     with _dl_pdf:
+        from pdf_report import markdown_simulation_report_to_pdf  # noqa: PLC0415
+
         _pdf_bytes, _pdf_err = markdown_simulation_report_to_pdf(_md_report)
         if _pdf_bytes:
             st.download_button(
