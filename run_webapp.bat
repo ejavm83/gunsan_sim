@@ -6,5 +6,5 @@ echo   Starting Gunsan Simulation Web Dashboard...
 echo   Browser will open automatically at http://localhost:8501
 echo   Press Ctrl+C to stop the server.
 echo ============================================================
-py -3 -m streamlit run webapp.py --server.port 8501
+py -3 -m streamlit run webapp.py --server.port 8501 --server.showEmailPrompt false
 pause

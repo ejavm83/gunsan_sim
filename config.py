@@ -19,8 +19,14 @@ from dataclasses import dataclass, field
 class InboundConfig:
     trucks_per_day: int = 10
     payload_ton: float = 20.0
-    first_arrival_min: int = 10 * 60  # 오전 10시
-    arrival_interval_min: int = 60     # 1시간 간격
+    # 입고 시각: 09~18시 균등, 오전(기본 ~12시) 구간에 전체의 80% 배치 (소재 공장 운영 정보)
+    arrival_window_start_min: int = 9 * 60
+    arrival_window_end_min: int = 18 * 60
+    morning_end_min: int = 12 * 60
+    morning_arrival_fraction: float = 0.8
+    # 하위 호환·추정식용: 고정 간격 모델을 쓰지 않지만 기본값 유지
+    first_arrival_min: int = 9 * 60
+    arrival_interval_min: int = 54  # 09~18h 균등 10대 시 대략 간격
 
     weighbridge_count: int = 1         # 1차/2차 계근 공용
     weigh_in_min: float = 5.0
@@ -49,7 +55,7 @@ class SortingConfig:
     blocks_per_subpile: int = 5
     forklift_load_min: float = 5.0  # 지게차 0.5 t 적재
     press_min_per_block: float = 1.5  # 90초
-    pallet_stack_min: float = 2.0   # 0.5 t 1개를 파레트에 적재
+    pallet_stack_min: float = 3.0   # 덩어리 1개 파레트 적재 약 3분
 
     press_machines: int = 1
     forklifts: int = 2
@@ -74,10 +80,11 @@ class MeltingConfig:
 
     elevator_count: int = 1
     elevator_pallets_per_trip: int = 2  # 5 t/회
-    elevator_cycle_min: float = 10.0
+    elevator_cycle_min: float = 5.0  # 왕복 1사이클 약 5분
 
     setup_min: float = 120.0    # 사전 준비 2시간
-    melting_min: float = 720.0  # 12시간 용해
+    # 병목: 8h 용해 + 산화 30분 + 슬래깅 30분 + 환원 4시간 (신규 운영 기준)
+    melting_min: float = 8 * 60 + 30 + 30 + 4 * 60  # 780
 
     furnace_count: int = 2  # 반사로(소단지) 2개
 
@@ -91,17 +98,17 @@ class MeltingConfig:
 class CastingConfig:
     holding_setup_min: float = 90.0  # 1~2시간 셋업 평균값
 
-    # 비율: 퓨플레이크 3 : SCR 7
-    flake_ratio: float = 0.3
-    scr_ratio: float = 0.7
+    # 비율: 큐플레이크 20% : SCR 80%
+    flake_ratio: float = 0.2
+    scr_ratio: float = 0.8
 
-    # 퓨플레이크: 1 t 포대 / 2.5분
+    # 큐플레이크: 1 t / 약 3.1분
     flake_unit_ton: float = 1.0
-    flake_min_per_unit: float = 2.5
+    flake_min_per_unit: float = 3.1
 
-    # SCR 코일: 4 t / 10분
+    # SCR 코일: 4 t / 약 12.5분 (톤당 속도는 큐플레이크와 동일 수준)
     scr_unit_ton: float = 4.0
-    scr_min_per_unit: float = 10.0
+    scr_min_per_unit: float = 12.5
 
     casting_lines_flake: int = 1
     casting_lines_scr: int = 1
@@ -117,14 +124,19 @@ class OutboundConfig:
     flake_buffer_unit: int = 100  # 100 포대 = 100 t
     scr_buffer_unit: int = 75     # 75 코일 = 300 t
 
-    truck_capacity_ton: float = 22.5  # 20~25 t 평균값
+    truck_capacity_ton: float = 20.0  # 시뮬 기준 20 t
     weigh_in_min: float = 5.0
     weigh_out_min: float = 5.0
-    loading_min_per_ton: float = 0.6  # 22.5 t 상차에 약 13~15분
+    loading_min_per_ton: float = 0.6  # 20 t 상차 약 12분 전후
 
-    # 빈 트럭 도착 간격: 평균값(분)
+    # 빈 트럭 도착 간격: 평균값(분); 오전(8~12시) 출하 비중 약 80%
     empty_truck_interval_min: float = 90.0
     outbound_start_min: int = 8 * 60  # 오전 8시부터 출하 시작
+    morning_dispatch_fraction: float = 0.8
+    outbound_morning_start_min: int = 8 * 60
+    outbound_morning_end_min: int = 12 * 60
+    outbound_afternoon_start_min: int = 12 * 60
+    outbound_arrival_window_end_min: int = 18 * 60
 
 
 # ---------------------------------------------------------------------------

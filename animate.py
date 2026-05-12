@@ -30,7 +30,7 @@ from matplotlib.patches import FancyBboxPatch, Rectangle  # noqa: E402
 from config import SimulationConfig  # noqa: E402
 from metrics import Event, Metrics  # noqa: E402
 
-_BUILD_INFO_TEXT = "개발자: (주) 지엠티 김길용 수석 | v0.0.2 (2026.05.09)"
+_BUILD_INFO_TEXT = "개발자: (주) 지엠티 김길용 수석 | v0.0.3 (2026.05.12)"
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +45,7 @@ class FactoryState:
     sort_queue: int = 0            # 하역 후 더미(트럭) 수
     press_queue: int = 0           # 선별 끝난 sub-pile 수
     pallet_buffer: int = 0         # 압착 후 파레트 수
-    flake_buffer: int = 0          # 퓨플레이크 포대 수
+    flake_buffer: int = 0          # 큐프레이크 포대 수
     scr_buffer: int = 0            # SCR 코일 수
     truck_outbound_active: int = 0  # 출하 트럭 활성
 
@@ -208,8 +208,8 @@ _FURNACE_COLOR = {
 _FURNACE_STATE_DESC = {
     "idle": "[대기 상태 (Idle)]\n반사로가 비어있는 대기 상태입니다.\n다음 배치 장입을 기다리고 있습니다.",
     "charging": "[장입 중 (Charging)]\n파레트를 엘리베이터로 반사로에 투입 중입니다.\n• 1배치 = 약 60 파레트 (30톤)\n• 장입 시간: 약 2~3시간",
-    "melting": "[용해 중 (Melting)]\n스크랩을 고온으로 녹이는 중입니다.\n• 용해 온도: 1,100~1,200°C\n• 소요 시간: 약 12시간\n• 가스 버너로 가열",
-    "casting": "[주조 중 (Casting)]\n용탕을 제품으로 주조하는 중입니다.\n• 퓨플레이크 라인: 50%\n• SCR 라인: 50%\n• 소요 시간: 약 8시간",
+    "melting": "[용해·정련 (Melting)]\n스크랩을 고온으로 녹이는 중입니다.\n• 용해 온도: 1,100~1,200°C\n• 병목 구간: 약 13시간(8h 용해+산화·슬래깅·환원)\n• 가스 버너로 가열",
+    "casting": "[주조 중 (Casting)]\n용탕을 제품으로 주조하는 중입니다.\n• 큐프레이크 라인: 50%\n• SCR 라인: 50%\n• 소요 시간: 약 8시간",
 }
 
 
@@ -361,7 +361,7 @@ _BOXES = {
         description="[반사로 1]\n"
                     "스크랩을 용해하여 용탕을 만드는 대형 용해로입니다.\n"
                     "• 배치 용량: 30톤\n"
-                    "• 용해 시간: 약 12시간\n"
+                    "• 용해·정련 병목: 약 13시간\n"
                     "• 상태: idle(대기) → charging(장입) → melting(용해) → casting(주조)\n"
                     "• 용탕 온도: 약 1,100~1,200°C"
     ),
@@ -370,13 +370,13 @@ _BOXES = {
         description="[반사로 2]\n"
                     "스크랩을 용해하여 용탕을 만드는 대형 용해로입니다.\n"
                     "• 배치 용량: 30톤\n"
-                    "• 용해 시간: 약 12시간\n"
+                    "• 용해·정련 병목: 약 13시간\n"
                     "• 상태: idle(대기) → charging(장입) → melting(용해) → casting(주조)\n"
                     "• 반사로 1과 교대로 운용하여 연속 생산"
     ),
     "flake_line": Box(
-        11.4, 2.8, 1.7, 1.0, "퓨플레이크 라인",
-        description="[퓨플레이크 라인]\n"
+        11.4, 2.8, 1.7, 1.0, "큐프레이크 라인",
+        description="[큐프레이크 라인]\n"
                     "용탕을 얇은 Cu 플레이크로 주조하는 라인입니다.\n"
                     "• 생산 비율: 배치당 약 50%\n"
                     "• 출력: 포대 단위 (25kg/포대)\n"
@@ -393,8 +393,8 @@ _BOXES = {
                     "• 용도: 전선, 케이블 제조용"
     ),
     "flake_buf": Box(
-        8.3, 2.8, 2.0, 1.0, "퓨플레이크 야적", max_n=100,
-        description="[퓨플레이크 야적장]\n"
+        8.3, 2.8, 2.0, 1.0, "큐프레이크 야적", max_n=100,
+        description="[큐프레이크 야적장]\n"
                     "생산된 Cu 플레이크 포대의 임시 보관 장소입니다.\n"
                     "• 최대 적재: 100 포대\n"
                     "• 포대 중량: 25kg/포대\n"
@@ -432,7 +432,7 @@ _BOXES = {
                     "완제품을 출하 트럭에 적재하는 장소입니다.\n"
                     "• 동시 상차 가능: 10대\n"
                     "• 상차 시간: 약 30~60분/대\n"
-                    "• 퓨플레이크 또는 SCR 코일 적재\n"
+                    "• 큐프레이크 또는 SCR 코일 적재\n"
                     "• 지게차/크레인 사용"
     ),
 }
@@ -837,17 +837,18 @@ class InteractiveViewer:
             xytext=(15, 15),
             textcoords="offset points",
             bbox=dict(
-                boxstyle="round,pad=0.5",
-                fc="#fffde7",
-                ec="#fbc02d",
-                alpha=0.95,
-                linewidth=1.5,
+                boxstyle="round,pad=0.55",
+                fc="#0f172a",
+                ec="#38bdf8",
+                alpha=1.0,
+                linewidth=2.25,
             ),
-            fontsize=8,
+            color="#f1f5f9",
+            fontsize=9,
             ha="left",
             va="bottom",
             visible=False,
-            zorder=100,
+            zorder=1000,
         )
 
         # 이벤트 연결
@@ -997,6 +998,17 @@ def show_interactive_factory(
             draw_frame(current_frame[0] + 10)
         elif event.key == "pagedown":
             draw_frame(current_frame[0] - 10)
+        elif event.key == "c":
+            ann = viewer.tooltip_annotation
+            if ann.get_visible():
+                text = ann.get_text()
+                if text:
+                    try:
+                        tk_w = fig.canvas.get_tk_widget()
+                        tk_w.clipboard_clear()
+                        tk_w.clipboard_append(text)
+                    except Exception:
+                        pass
 
     fig.canvas.mpl_connect("key_press_event", on_key)
 
@@ -1004,7 +1016,7 @@ def show_interactive_factory(
     fig.text(
         0.5, 0.01,
         "조작: ←/→ 프레임 이동 | PageUp/Down 10프레임 이동 | Home/End 처음/끝 | "
-        "마우스 오버: 상세 설명 표시",
+        "마우스 오버: 상세 설명 표시 | 툴팁 표시 중 C: 내용 클립보드 복사",
         ha="center", fontsize=9, color="#666666",
     )
     fig.text(

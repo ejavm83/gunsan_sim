@@ -3,7 +3,7 @@
 ' 또는 VS Code / IntelliJ PlantUML 확장으로 미리보기
 
 @startuml main_cli_execution
-title **1. 명령줄(CLI) 실행** — python main.py 호출부터 산출물까지
+title 1. 명령줄(CLI) 실행 — python main.py 호출부터 산출물까지
 
 actor "사용자" as User
 participant "CLI 진입점\n(main.py)" as Main
@@ -33,14 +33,14 @@ MET --> Main: 핵심지표 딕셔너리
 
 Main -> User: 콘솔에 요약 표 출력\nformat_summary
 
-opt **CP-SAT 비교** (기본 케이스, --no-optimize 없을 때)
+opt CP-SAT 비교 (기본 케이스, --no-optimize 없을 때)
   Main -> OPT: 배치 1회 처리 시간 추정\nestimate_batch_duration
   OPT --> Main: 소요 분
   Main -> Main: 이벤트 중 압착 완료 시각 수집\n(단계=press, 종류=pallet_done)
-  alt **시뮬 실측으로 배치 시작 시각 확보**
+  alt 시뮬 실측으로 배치 시작 시각 확보
     Main -> OPT: 최적 스케줄 풀기\nsolve_furnace_schedule
     OPT --> Main: 반사로 배정·최종 완료 시각
-  else **실측 부족 시 추정 모델 사용**
+  else 실측 부족 시 추정 모델 사용
     Main -> OPT: 배치 시작 시각 추정\nestimate_batch_releases
     OPT --> Main: 시작 시각 목록
     Main -> OPT: 최적 스케줄 풀기\nsolve_furnace_schedule
@@ -49,24 +49,24 @@ opt **CP-SAT 비교** (기본 케이스, --no-optimize 없을 때)
   Main -> User: CP-SAT 결과·메이크스팬 비교 출력
 end
 
-opt **이벤트 CSV 저장** (--events 경로 지정 시)
+opt 이벤트 CSV 저장 (--events 경로 지정 시)
   Main -> Main: CSV 기록\nwrite_events_csv
   Main -> User: 저장 경로 안내
 end
 
-opt **정적 차트** (기본, --no-plot 없을 때)
+opt 정적 차트 (기본, --no-plot 없을 때)
   Main -> VIS: 버퍼·간트·트럭 등 일괄 저장\nrender_all
   VIS --> Main: 저장된 파일 경로들
   Main -> User: 차트 저장 완료 안내
 end
 
-opt **공장 애니메이션** (--animate 지정 시)
+opt 공장 애니메이션 (--animate 지정 시)
   Main -> ANI: GIF/MP4 생성\nrender_factory_animation
   ANI --> Main: 출력 파일 경로
   Main -> User: 애니메이션 저장 안내
 end
 
-opt **HTML 리포트** (--report 지정 시)
+opt HTML 리포트 (--report 지정 시)
   Main -> RPT: 인터랙티브 리포트 생성\ngenerate_report
   RPT --> Main: HTML 경로
   Main -> User: 리포트 저장·브라우저 열기 안내
@@ -79,7 +79,7 @@ deactivate Main
 
 
 @startuml run_simulation_internals
-title **2. 시뮬레이션 엔진 기동** — run_simulation() 내부 (simulation.py + SimPy)
+title 2. 시뮬레이션 엔진 기동 — run_simulation() 내부 (simulation.py + SimPy)
 
 participant "시뮬 실행\nrun_simulation" as RS
 participant "난수 생성기\n(random)" as RNG
@@ -96,15 +96,15 @@ RS -> GF: 자원·큐·프로세스 정의\nGunsanFactory(환경, 설정, 지표
 
 RS -> ENV: 입고 트럭 제너레이터 등록\nprocess(truck_inbound_generator)
 
-loop **선별 작업조 수(sorters)만큼**
+loop 선별 작업조 수(sorters)만큼
   RS -> ENV: 선별 워커 등록\nprocess(sort_worker)
 end
 
-loop **압착기 대수(press_machines)만큼**
+loop 압착기 대수(press_machines)만큼
   RS -> ENV: 압착 워커 등록\nprocess(press_worker)
 end
 
-loop **반사로 대수(furnace_count)만큼**
+loop 반사로 대수(furnace_count)만큼
   RS -> ENV: 용해·주조 워커 등록\nprocess(furnace_worker)
 end
 
@@ -128,7 +128,7 @@ deactivate RS
 
 
 @startuml streamlit_webapp_execution
-title **3. 웹 대시보드** — streamlit run webapp.py 호출 순서 (요약)
+title 3. 웹 대시보드 — streamlit run webapp.py 호출 순서 (요약)
 
 actor "사용자" as U
 participant "스트림릿 런타임" as ST
@@ -141,17 +141,17 @@ U -> ST: streamlit run webapp.py
 activate ST
 
 ST -> UI: 페이지 구성·접속 인증 여부 확인
-alt **로그인 전**
+alt 로그인 전
   UI -> U: 비밀번호 입력 요청
-else **로그인 후**
+else 로그인 후
   UI -> U: 대시보드 본문 표시
 end
 
-loop **세션마다 화면 갱신**
+loop 세션마다 화면 갱신
   UI -> U: 사이드바 슬라이더·공정 도식(Graphviz)
 end
 
-opt **사용자가 「시뮬레이션 실행」 클릭**
+opt 사용자가 「시뮬레이션 실행」 클릭
   UI -> CFG: 입고·선별 등 서브설정 합쳐\n전체 SimulationConfig 생성
   UI -> RS: 시뮬레이션 실행\nrun_simulation(설정)
   activate RS

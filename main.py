@@ -98,14 +98,24 @@ def main() -> None:
         random_seed=args.seed,
     )
 
-    print(f"[INFO] {args.days}일치 시뮬레이션을 시작합니다 (시뮬레이션 horizon = "
-          f"{cfg.sim_horizon_min} min)...")
-    metrics = run_simulation(cfg)
+    print(
+        f"[INFO] {args.days}일치 시뮬레이션을 시작합니다 "
+        f"(가상 시간 horizon = {cfg.sim_horizon_min} min)."
+    )
+    print("[INFO] SimPy 엔진 단계(아래 순서대로 진행됩니다):")
+    metrics = run_simulation(
+        cfg,
+        progress=lambda msg: print(f"       · {msg}"),
+    )
 
     summary = metrics.summary(cfg.sim_horizon_min)
     print(format_summary(summary))
 
     if not args.no_optimize:
+        print(
+            "\n[INFO] SimPy 이후 단계: 반사로 배치에 대해 CP-SAT으로 이론 스케줄·"
+            "메이크스팬을 계산하고 시뮬 실측과 비교합니다."
+        )
         # CP-SAT 로 이상적 메이크스팬 산출
         duration = estimate_batch_duration(cfg)
 
@@ -180,6 +190,7 @@ def main() -> None:
         print(f"[INFO] 이벤트 로그 저장: {args.events}")
 
     if not args.no_plot:
+        print("\n[INFO] matplotlib 정적 차트(buffer / Gantt / 트럭)를 생성합니다…")
         try:
             from visualize import render_all
         except ImportError as exc:

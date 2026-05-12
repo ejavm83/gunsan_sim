@@ -23,6 +23,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+from simulation import inbound_arrivals_for_day
+
 try:
     from ortools.sat.python import cp_model  # type: ignore
 except ImportError as exc:  # pragma: no cover
@@ -58,7 +60,7 @@ class ScheduleResult:
 def estimate_batch_duration(cfg) -> int:
     """`config.SimulationConfig` 기준 한 배치(=80 t)의 처리시간(분) 추정.
 
-    엘리베이터 운반(파레트 32개, 2개/회 × 10분) + 사전 준비 + 12시간 용해 +
+    엘리베이터 운반(파레트당 설정 사이클) + 사전 준비 + 용해 병목(8h+산화·슬래깅·환원) +
     홀딩로 셋업 + 주조(병렬, max(flake, scr) 시간) 의 합으로 계산한다.
     """
     mc = cfg.melting
@@ -77,8 +79,8 @@ def estimate_batch_duration(cfg) -> int:
 def estimate_batch_releases(cfg) -> list[int]:
     """선별/압착 단순 계산식으로 N번째 배치(32 파레트)가 모이는 분을 추정.
 
-    - 트럭 1대(20 t) 도착 시점 = 10:00 + 60·k 분 (k=0..9), 매일 반복.
-    - 트럭당 30분 선별 + 8 sub-pile × (5+1.5+2)·5 분 압착 → 8 파레트.
+    - 트럭 도착: 09~18시, 오전 80% 균등(결정론적 균등 배치로 추정).
+    - 트럭당 30분 선별 + 8 sub-pile × (지게차+압착+파레트적재)×5 분 압착 → 8 파레트.
     - 즉시 정상 가동된다고 가정하여 누적 파레트 수가 32의 배수가 되는 시점을 release 로 본다.
     """
     sc = cfg.sorting
@@ -91,8 +93,7 @@ def estimate_batch_releases(cfg) -> list[int]:
     pallet_finish_times: list[float] = []
     last_press_done = 0.0
     for day in range(cfg.sim_days):
-        for k in range(ic.trucks_per_day):
-            arrive = day * 24 * 60 + ic.first_arrival_min + k * ic.arrival_interval_min
+        for arrive in inbound_arrivals_for_day(day, ic, None):
             # 1차 계근 5분 + 하역 20분 = 25분 후 더미가 sort_queue 에 들어감
             dump_ready = arrive + ic.weigh_in_min + ic.unloading_min
             sort_done = max(dump_ready, last_press_done) + 30.0

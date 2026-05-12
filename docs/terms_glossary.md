@@ -1,19 +1,19 @@
 # 용어 및 약어
 
 사이드바 슬라이더, 개요/공정/방법론 탭, 실행 후 KPI/차트에 쓰이는 표현을 정리했습니다.  
-이 파일은 웹의 **용어 및 약어** 페이지에서 바로 편집/저장할 수 있습니다.
+이 파일은 웹의 용어 및 약어 페이지에서 바로 편집/저장할 수 있습니다.
 
 ## 약어
 
 | 약어 | 설명 |
 |------|------|
-| **SCR** | **South Wire Rod**. 연속 주조로 만든 구리 봉/선재를 코일 형태로 권취한 제품 |
-| **DES** | **Discrete Event Simulation**, 이산사건 시뮬레이션 |
-| **CP-SAT** | **Constraint Programming + SAT**, OR-Tools 최적화 솔버 |
-| **SAT** | Boolean Satisfiability(논리식 만족 문제) |
-| **KPI** | Key Performance Indicator(핵심 성과 지표) |
-| **ROI** | Return on Investment(투자 대비 효과) |
-| **CV** | Coefficient of Variation(변동계수) |
+| SCR | South Wire Rod. 연속 주조로 만든 구리 봉/선재를 코일 형태로 권취한 제품 |
+| DES | Discrete Event Simulation, 이산사건 시뮬레이션 |
+| CP-SAT | Constraint Programming + SAT, OR-Tools 최적화 솔버 |
+| SAT | Boolean Satisfiability(논리식 만족 문제) |
+| KPI | Key Performance Indicator(핵심 성과 지표) |
+| ROI | Return on Investment(투자 대비 효과) |
+| CV | Coefficient of Variation(변동계수) |
 
 ## 공정/설비 용어
 

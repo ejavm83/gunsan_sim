@@ -2,13 +2,13 @@
 
 전체 5단계 공정을 다음과 같이 모델링한다.
 
-  1. 입고/하역  : 트럭 도착 → 1차 계근 → 하역장 → 2차 계근 → 출차
-  2. 선별/압착  : 하역 더미 → 선별(30분/트럭) → 압착(0.5 t × 8.5분) → 파레트 적재
-  3. 장입/용해  : 파레트 32개(=80 t) 모이면 엘리베이터로 운반 → 사전 준비 →
-                  12시간 용해 → 주조 라인으로 송출 (반사로 2개 병렬)
-  4. 주조       : 같은 쇳물을 퓨플레이크 라인(2.5분/1 t)과 SCR 라인(10분/4 t)으로
-                  3:7 비율 동시 생산
-  5. 출하       : 빈 트럭 도착 → 1차 계근 → 상차 → 2차 계근 → 출차
+  1. 입고/하역  : 트럭 도착(09~18시, 오전 80%) → 1차 계근 → 하역장 → 2차 계근 → 출차
+  2. 선별/압착  : 하역 더미 → 선별(30분/트럭) → 압착 사이클(지게차+90초+파레트적재/블록)
+                  → 파레트 적재
+  3. 장입/용해  : 파레트 32개(=80 t) 모이면 엘리베이터(5분/왕복)로 운반 → 사전 준비 →
+                  용해 병목(8h+산화·슬래깅·환원) → 주조 라인으로 송출 (반사로 2개 병렬)
+  4. 주조       : 큐플레이크(약 3.1분/1 t)와 SCR(약 12.5분/4 t)을 2:8 비율로 병렬 생산
+  5. 출하       : 빈 트럭(오전 출하 80% 편향) → 1차 계근 → 상차(20 t 기준) → 2차 계근 → 출차
 
 사용 예::
 
@@ -21,13 +21,60 @@
 from __future__ import annotations
 
 import random
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Iterator
 
 import simpy
 
-from config import SimulationConfig
+from config import InboundConfig, OutboundConfig, SimulationConfig
 from metrics import Metrics
+
+
+def inbound_arrivals_for_day(
+    day: int, ic: InboundConfig, rng: random.Random | None
+) -> list[float]:
+    """하루치 입고 트럭 도착 시각(분). rng 가 None 이면 구간 균등·결정론적 배치."""
+    base = float(day * 24 * 60)
+    ws, we = float(ic.arrival_window_start_min), float(ic.arrival_window_end_min)
+    me = float(ic.morning_end_min)
+    n = ic.trucks_per_day
+    n_morn = max(0, min(n, int(round(n * ic.morning_arrival_fraction))))
+    n_aft = n - n_morn
+    times: list[float] = []
+    if rng is None:
+        for i in range(n_morn):
+            span = max(me - ws, 1e-9)
+            times.append(base + ws + (i + 0.5) / max(n_morn, 1) * span)
+        for j in range(n_aft):
+            span_a = max(we - me, 1e-9)
+            times.append(base + me + (j + 0.5) / max(n_aft, 1) * span_a)
+    else:
+        for _ in range(n_morn):
+            times.append(base + rng.uniform(ws, me))
+        for _ in range(n_aft):
+            times.append(base + rng.uniform(me, we))
+    times.sort()
+    return times
+
+
+def next_outbound_arrival_min(env_now: float, rng: random.Random, oc: OutboundConfig) -> float:
+    """출하 빈 트럭 다음 도착 시각(분). 지수 간격에 가깝게 전진한 뒤, 오전·오후 창으로 샘플링한다."""
+    t0 = max(float(env_now), float(oc.outbound_start_min))
+    mean = max(float(oc.empty_truck_interval_min), 1e-6)
+    min_forward = t0 + rng.expovariate(1.0 / mean)
+    day_floor = int(t0 // 1440) * 1440.0
+    for day_off in range(0, 800):
+        day = day_floor + day_off * 1440.0
+        use_morning = rng.random() < float(oc.morning_dispatch_fraction)
+        if use_morning:
+            lo, hi = float(oc.outbound_morning_start_min), float(oc.outbound_morning_end_min)
+        else:
+            lo, hi = float(oc.outbound_afternoon_start_min), float(oc.outbound_arrival_window_end_min)
+        cand = day + rng.uniform(lo, hi)
+        if cand >= min_forward and cand > env_now:
+            return cand
+    return t0 + mean
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +141,7 @@ class GunsanFactory:
         self.elevator = simpy.Resource(env, capacity=mc.elevator_count)
         self.furnaces = simpy.Resource(env, capacity=mc.furnace_count)
 
-        # 4) 주조 라인 (퓨플레이크 / SCR)
+        # 4) 주조 라인 (큐프레이크 / SCR)
         self.flake_line = simpy.Resource(env, capacity=cc.casting_lines_flake)
         self.scr_line = simpy.Resource(env, capacity=cc.casting_lines_scr)
 
@@ -124,12 +171,11 @@ class GunsanFactory:
 
     # ---- 1. 입고/하역 ----------------------------------------------------
     def truck_inbound_generator(self) -> Iterator[simpy.events.Event]:
-        """매일 오전 10시부터 1시간 간격으로 트럭을 도착시킨다."""
+        """매일 09~18시 사이 도착(오전 80% 균등)."""
         ic = self.cfg.inbound
         truck_id = 0
         for day in range(self.cfg.sim_days):
-            for k in range(ic.trucks_per_day):
-                arrive_at = day * 24 * 60 + ic.first_arrival_min + k * ic.arrival_interval_min
+            for arrive_at in inbound_arrivals_for_day(day, ic, self.rng):
                 delay = max(0.0, arrive_at - self.env.now)
                 if delay:
                     yield self.env.timeout(delay)
@@ -316,11 +362,12 @@ class GunsanFactory:
         truck_id = 0
         while True:
             truck_id += 1
-            # 지수 분포로 도착 간격 모델링 (평균 90분)
-            gap = self.rng.expovariate(1.0 / oc.empty_truck_interval_min)
-            yield self.env.timeout(gap)
+            nxt = next_outbound_arrival_min(self.env.now, self.rng, oc)
+            delay = max(0.0, nxt - self.env.now)
+            if delay:
+                yield self.env.timeout(delay)
 
-            # 30/70 비율로 트럭의 적재 종류를 결정
+            # 주조 비율과 동일 확률로 트럭 적재 종류 결정
             load_kind = "flake" if self.rng.random() < cc.flake_ratio else "scr"
             self.env.process(self.outbound_truck(truck_id, load_kind))
 
@@ -336,9 +383,9 @@ class GunsanFactory:
             yield req
             yield self.env.timeout(oc.weigh_in_min)
 
-        # 적재 - flake 트럭은 1 t 포대 20개, scr 트럭은 4 t 코일 5개
+        # 적재 - flake 트럭은 1 t 포대 20개, scr 트럭은 4 t 코일 5개(20 t)
         if load_kind == "flake":
-            target_units = int(oc.truck_capacity_ton // 1.0)  # 22개 (≤ 22.5 t)
+            target_units = int(oc.truck_capacity_ton // 1.0)
             buf = self.flake_buffer
             unit_ton = 1.0
         else:
@@ -399,12 +446,32 @@ class GunsanFactory:
 # ---------------------------------------------------------------------------
 
 
-def run_simulation(cfg: SimulationConfig) -> Metrics:
-    """주어진 설정으로 시뮬레이션을 실행하고 Metrics 객체를 반환한다."""
+def run_simulation(
+    cfg: SimulationConfig,
+    progress: Callable[[str], None] | None = None,
+) -> Metrics:
+    """주어진 설정으로 시뮬레이션을 실행하고 Metrics 객체를 반환한다.
+
+    progress:
+        호출될 때마다 한 줄 안내 문자열을 넘긴다. CLI·웹에서 실행 과정을
+        사용자에게 보여 줄 때 사용한다. None 이면 호출하지 않는다.
+    """
+
+    def _p(msg: str) -> None:
+        if progress is not None:
+            progress(msg)
+
+    horizon = cfg.sim_horizon_min
+    _p(
+        f"① 설정 적용: {cfg.sim_days}일치 · 시뮬 종료 시각 {horizon}분 "
+        f"(약 {horizon / 60:.1f}시간) · 난수 시드 {cfg.random_seed}"
+    )
+
     rng = random.Random(cfg.random_seed)
     env = simpy.Environment()
     metrics = Metrics()
     factory = GunsanFactory(env, cfg, metrics, rng)
+    _p("② SimPy 환경·공장(자원·큐·버퍼) 객체를 초기화했습니다.")
 
     # 5단계 워커 등록
     env.process(factory.truck_inbound_generator())
@@ -415,6 +482,20 @@ def run_simulation(cfg: SimulationConfig) -> Metrics:
     for f in range(cfg.melting.furnace_count):
         env.process(factory.furnace_worker(furnace_id=f + 1))
     env.process(factory.outbound_truck_generator())
+    _p(
+        "③ 프로세스 등록: 입고 생성 · 선별 "
+        f"×{cfg.sorting.sorters} · 압착 ×{cfg.sorting.press_machines} · "
+        f"반사로 ×{cfg.melting.furnace_count} · 출하 생성"
+    )
 
-    env.run(until=cfg.sim_horizon_min)
+    _p(
+        "④ env.run() — 0분부터 종료 시각까지 이산사건(트럭·파레트·배치·출하 등)을 "
+        "시간순으로 처리합니다…"
+    )
+    env.run(until=horizon)
+    _p(
+        f"⑤ 엔진 종료: 사건 로그 {len(metrics.events)}건 · "
+        f"용해 완료 배치 {metrics.batches_completed}건 · "
+        f"입고 트럭 {metrics.truck_in_done}대 처리"
+    )
     return metrics
