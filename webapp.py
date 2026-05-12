@@ -35,7 +35,6 @@ st.set_page_config(
 import pandas  # noqa: F401 — plotly가 부분 초기화된 pandas를 보지 않도록 먼저 로드
 
 import streamlit.components.v1 as components
-from extra_streamlit_components import CookieManager
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -48,7 +47,7 @@ from config import (
     OutboundConfig,
     SimulationConfig,
 )
-from metrics import Metrics
+from metrics import Event, Metrics
 from simulation import run_simulation
 from report import (
     analyze,
@@ -384,6 +383,55 @@ def _inject_streamlit_help_tooltip_styles(*, show_widget_help: bool) -> None:
 
 # 마지막 시뮬 결과 보존(Streamlit 버튼은 rerun당 한 번만 True)
 _GUNSAN_LAST_RUN_BUNDLE_KEY = "gunsan_last_run_bundle"
+# Cloud 세션·WebSocket 부담 완화: analyze 이후에만 적용(요약·차트용 이벤트는 이미 반영됨)
+_GUNSAN_SESSION_MAX_EVENTS = 72_000
+_GUNSAN_SESSION_MAX_BUFFER_POINTS = 16_000
+
+
+def _event_kept_for_streamlit_session(ev: Event) -> bool:
+    """차트·일별생산·Gantt·누적트럭에 필요한 사건은 전부 유지한다."""
+    if ev.stage == "melting":
+        return True
+    if ev.stage == "casting":
+        return True
+    if ev.stage == "inbound" and ev.kind in ("arrive", "depart"):
+        return True
+    if ev.stage == "outbound" and ev.kind in ("arrive", "depart"):
+        return True
+    return False
+
+
+def _downsample_metric_buffers(metrics: Metrics) -> None:
+    for attr in ("pallet_buffer_levels", "flake_buffer_levels", "scr_buffer_levels"):
+        seq = getattr(metrics, attr)
+        m = _GUNSAN_SESSION_MAX_BUFFER_POINTS
+        if len(seq) <= m:
+            continue
+        n = len(seq)
+        idx = [round(i * (n - 1) / max(m - 1, 1)) for i in range(m)]
+        setattr(metrics, attr, [seq[j] for j in sorted(set(idx))])
+
+
+def _compact_metrics_for_streamlit_session(metrics: Metrics) -> tuple[int, int]:
+    """이벤트·버퍼 시계열을 줄여 session_state 동기화 부담을 낮춘다."""
+    evs = metrics.events
+    n0 = len(evs)
+    if n0 > _GUNSAN_SESSION_MAX_EVENTS:
+        critical = [e for e in evs if _event_kept_for_streamlit_session(e)]
+        other = [e for e in evs if not _event_kept_for_streamlit_session(e)]
+        if len(critical) > _GUNSAN_SESSION_MAX_EVENTS:
+            critical.sort(key=lambda e: e.time_min)
+            n = len(critical)
+            cap = _GUNSAN_SESSION_MAX_EVENTS
+            pick = [round(i * (n - 1) / max(cap - 1, 1)) for i in range(cap)]
+            metrics.events = [critical[j] for j in sorted(set(pick))]
+        else:
+            budget = _GUNSAN_SESSION_MAX_EVENTS - len(critical)
+            step = max(1, len(other) // max(budget, 1))
+            sampled = other[::step][:budget]
+            metrics.events = sorted(critical + sampled, key=lambda e: e.time_min)
+    _downsample_metric_buffers(metrics)
+    return n0, len(metrics.events)
 
 
 def _read_markdown_file(path: Path, default_text: str = "") -> str:
@@ -838,6 +886,7 @@ def _build_simulation_results_markdown(
     kpi_specs: list[tuple[str, str, str | None]],
     *,
     generated_at: str,
+    original_event_rows: int | None = None,
 ) -> str:
     """「마지막 실행 결과」 화면에 대응하는 텍스트 보고서(차트 제외)."""
     s = analysis.summary
@@ -909,6 +958,13 @@ def _build_simulation_results_markdown(
     rec_md = "\n".join(f"- {line}" for line in analysis.recommendations) if analysis.recommendations else "_없음_"
     truck_md = "\n".join(f"- {line}" for line in analysis.truck_flow_insights) if analysis.truck_flow_insights else "_없음_"
 
+    ev_session_note: list[str] = []
+    if original_event_rows is not None and original_event_rows > ev_df_total_rows:
+        ev_session_note = [
+            f"- 시뮬 전체 사건 **{original_event_rows:,}**건 중, 웹 세션에는 **{ev_df_total_rows:,}**건만 보관했습니다.",
+            "",
+        ]
+
     parts: list[str] = [
         "# 군산 SCR 공정 물류 시뮬레이션 — 실행 보고서",
         "",
@@ -925,7 +981,9 @@ def _build_simulation_results_markdown(
         "",
         "## 3. 일반인을 위한 상세 결과 해석",
         "",
-        layperson_interpretation_export_markdown(metrics, cfg, analysis),
+        layperson_interpretation_export_markdown(
+            metrics, cfg, analysis, event_log_total=original_event_rows
+        ),
         "",
         "## 4. 병목 진단",
         "",
@@ -955,6 +1013,7 @@ def _build_simulation_results_markdown(
         "",
         truck_md,
         "",
+        *ev_session_note,
         "## 8. 시간순 사건 로그",
         "",
         f"- 화면과 동일 필터 요약: {event_filter_note}",
@@ -1619,13 +1678,12 @@ _COOKIE_CM_KEY = "gunsan_dashboard_cookie_mgr"
 _ENABLE_PASSWORD_AUTH = os.getenv("GUNSAN_ENABLE_PASSWORD_AUTH", "0") == "1"
 
 
-def _auth_cookie_manager() -> CookieManager:
-    """매 rerun마다 새 인스턴스를 만든다.
-
-    `CookieManager` 는 내부에서 Streamlit 커스텀 컴포넌트를 호출하기 때문에
-    `@st.cache_resource` 로 감싸면 ``CachedWidgetWarning`` 이 발생한다.
-    컴포넌트는 ``key`` 기준으로 dedup 되므로 매 rerun 재생성해도 안전하다.
-    """
+def _auth_cookie_manager():
+    """비밀번호 쿠키용 CookieManager. extra-streamlit-components 미설치 시 None."""
+    try:
+        from extra_streamlit_components import CookieManager
+    except ImportError:
+        return None
     return CookieManager(key=_COOKIE_CM_KEY)
 
 
@@ -1891,7 +1949,9 @@ if "authenticated" not in st.session_state:
 
 if _ENABLE_PASSWORD_AUTH:
     _cookie_mgr = _auth_cookie_manager()
-    _cookie_val = _cookie_mgr.get(_DASHBOARD_AUTH_COOKIE)
+    _cookie_val = (
+        _cookie_mgr.get(_DASHBOARD_AUTH_COOKIE) if _cookie_mgr is not None else None
+    )
     if (
         not st.session_state.authenticated
         and _cookie_val == _DASHBOARD_AUTH_TOKEN
@@ -1912,14 +1972,15 @@ if _ENABLE_PASSWORD_AUTH:
         if st.button("접속", type="primary"):
             if password_input == _ACCESS_PASSWORD:
                 st.session_state.authenticated = True
-                _cookie_mgr.set(
-                    _DASHBOARD_AUTH_COOKIE,
-                    _DASHBOARD_AUTH_TOKEN,
-                    key="gunsan_auth_cookie_set",
-                    max_age=365.25 * 24 * 3600,
-                    path="/",
-                    same_site="lax",
-                )
+                if _cookie_mgr is not None:
+                    _cookie_mgr.set(
+                        _DASHBOARD_AUTH_COOKIE,
+                        _DASHBOARD_AUTH_TOKEN,
+                        key="gunsan_auth_cookie_set",
+                        max_age=365.25 * 24 * 3600,
+                        path="/",
+                        same_site="lax",
+                    )
                 st.rerun()
             else:
                 st.error("비밀번호가 올바르지 않습니다.")
@@ -2428,10 +2489,13 @@ with st.container(border=False):
             st.success(f"✅ 결과 반영 완료 — KPI·차트를 아래에서 확인하세요. (실행 {elapsed:.2f}초)")
 
             analysis = analyze(metrics, cfg)
+            _ev_total, _ev_kept = _compact_metrics_for_streamlit_session(metrics)
             st.session_state[_GUNSAN_LAST_RUN_BUNDLE_KEY] = {
                 "metrics": metrics,
                 "analysis": analysis,
                 "cfg": cfg,
+                "event_log_total": _ev_total,
+                "event_log_kept": _ev_kept,
             }
 
         _gunsan_bundle = st.session_state.get(_GUNSAN_LAST_RUN_BUNDLE_KEY)
@@ -2467,6 +2531,8 @@ if _gunsan_show_results and _main_page == "시뮬레이션":
     flake_ratio = int(round(cfg.casting.flake_ratio * 100))
     empty_truck_interval = int(round(cfg.outbound.empty_truck_interval_min))
     summary = analysis.summary
+    _evt_log_total: int | None = _gunsan_bundle.get("event_log_total")
+    _evt_log_kept: int | None = _gunsan_bundle.get("event_log_kept")
 
     with st.expander("📌 이 시뮬 숫자가 어디서 오나요? (쉬운 설명)", expanded=False):
         _render_simulation_inputs_layperson_guide()
@@ -2626,11 +2692,22 @@ if _gunsan_show_results and _main_page == "시뮬레이션":
             key="gunsan_layperson_gantt",
         )
     st.markdown(
-        layperson_interpretation_markdown(metrics, cfg, analysis),
+        layperson_interpretation_markdown(
+            metrics, cfg, analysis, event_log_total=_evt_log_total
+        ),
         unsafe_allow_html=True,
     )
 
     st.header("📜 시간순 사건 로그")
+    if (
+        _evt_log_total is not None
+        and _evt_log_kept is not None
+        and _evt_log_total > _evt_log_kept
+    ):
+        st.info(
+            f"Streamlit Cloud·브라우저 부담을 줄이기 위해, 세션에는 전체 **{_evt_log_total:,}**건 중 "
+            f"**{_evt_log_kept:,}**건만 보관합니다. CSV·Markdown·아래 표는 이 보관분 기준입니다."
+        )
     st.caption(
         "시뮬레이션 동안 공장 안에서 일어난 일을 시간 순서대로 정리한 표입니다. "
         "공정 구간이나 키워드로 걸러 보거나 CSV·Markdown 보고서로 내려받을 수 있습니다."
@@ -2714,6 +2791,7 @@ if _gunsan_show_results and _main_page == "시뮬레이션":
         _report_ev_note,
         _kpi_specs,
         generated_at=_report_gen_stamp,
+        original_event_rows=_evt_log_total,
     )
 
     _dl_csv, _dl_md, _dl_pdf = st.columns(3)

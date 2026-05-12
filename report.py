@@ -521,6 +521,7 @@ def _layperson_sections(
     metrics: Metrics, cfg: SimulationConfig, analysis: Analysis,
     *,
     include_rule_insights_sections: bool = True,
+    event_log_total: int | None = None,
 ) -> list[tuple[str, list[str]]]:
     """섹션 제목과 문단 목록. 마크다운/HTML 양쪽에서 재사용."""
     s = analysis.summary
@@ -713,15 +714,22 @@ def _layperson_sections(
         sections.append(("일별 생산 막대를 생각할 때", pdaily))
 
     # 7. 기록·한계
-    nevents = len(metrics.events)
+    evt_full = event_log_total if event_log_total is not None else len(metrics.events)
+    evt_shown = len(metrics.events)
     p7 = [
-        f"이번 실행에서는 시간순 사건이 {_dyn(format(nevents, ','))}건 기록되었습니다. "
+        f"이번 실행에서는 시간순 사건이 {_dyn(format(evt_full, ','))}건 기록되었습니다. "
         "요약 지표와(있다면) 동봉한 그래프·표는 모두 이 기록을 압축한 것입니다.",
         "규칙으로 자동 생성하는 관찰 포인트·권장 문구는 있는 그대로의 힌트입니다. "
         "현장의 계약·날씨·설비 고장 등은 모델에 없으므로, 중요한 결정은 사람이 한 번 더 검토하는 것이 좋습니다.",
         "같은 설정이라도 난수 시드(출하 트럭 간격 등)를 바꾸면 곡선 모양은 달라질 수 있습니다. "
         "몇 번 돌려 보고 공통으로 나타나는 패턴을 보는 것이 안전합니다.",
     ]
+    if event_log_total is not None and evt_full > evt_shown:
+        p7.insert(
+            1,
+            f"**(웹 세션 한정)** 화면·다운로드용으로는 시간순 사건 중 **{evt_shown:,}**건만 "
+            f"보관했습니다. (실행 전체 **{evt_full:,}**건.)",
+        )
     if not include_rule_insights_sections:
         p7.append(
             "관찰 포인트와 권장 액션 문장의 전체 목록은 이 HTML 뒤쪽 "
@@ -746,11 +754,17 @@ def _layperson_paragraph_to_plain_markdown(p: str) -> str:
 
 
 def layperson_interpretation_export_markdown(
-    metrics: Metrics, cfg: SimulationConfig, analysis: Analysis
+    metrics: Metrics,
+    cfg: SimulationConfig,
+    analysis: Analysis,
+    *,
+    event_log_total: int | None = None,
 ) -> str:
     """파일·다운로드용: 일반인 해석을 순수 Markdown으로 만든다."""
     chunks: list[str] = []
-    for title, paras in _layperson_sections(metrics, cfg, analysis):
+    for title, paras in _layperson_sections(
+        metrics, cfg, analysis, event_log_total=event_log_total
+    ):
         chunks.append(f"#### {title}\n\n")
         for para in paras:
             chunks.append(_layperson_paragraph_to_plain_markdown(para))
@@ -759,11 +773,17 @@ def layperson_interpretation_export_markdown(
 
 
 def layperson_interpretation_markdown(
-    metrics: Metrics, cfg: SimulationConfig, analysis: Analysis
+    metrics: Metrics,
+    cfg: SimulationConfig,
+    analysis: Analysis,
+    *,
+    event_log_total: int | None = None,
 ) -> str:
     """Streamlit용: 섹션 제목은 Markdown, 본문은 수치 강조 HTML 인라인."""
     chunks: list[str] = []
-    for title, paras in _layperson_sections(metrics, cfg, analysis):
+    for title, paras in _layperson_sections(
+        metrics, cfg, analysis, event_log_total=event_log_total
+    ):
         chunks.append(f"#### {title}\n")
         for p in paras:
             chunks.append(_layperson_paragraph_to_rich_html(p))
@@ -772,12 +792,20 @@ def layperson_interpretation_markdown(
 
 
 def layperson_interpretation_html(
-    metrics: Metrics, cfg: SimulationConfig, analysis: Analysis
+    metrics: Metrics,
+    cfg: SimulationConfig,
+    analysis: Analysis,
+    *,
+    event_log_total: int | None = None,
 ) -> str:
     """HTML 리포트용. 단락별 escape + 《수》 구간 수치 강조."""
     parts: list[str] = []
     for title, paras in _layperson_sections(
-        metrics, cfg, analysis, include_rule_insights_sections=False
+        metrics,
+        cfg,
+        analysis,
+        include_rule_insights_sections=False,
+        event_log_total=event_log_total,
     ):
         parts.append(f'<h3 class="layperson-h3">{escape(title)}</h3>')
         for p in paras:
