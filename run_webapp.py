@@ -40,8 +40,6 @@ def main() -> int:
         str(ROOT / "webapp.py"),
         "--server.port",
         str(port),
-        "--server.showEmailPrompt",
-        "false",
         "--browser.gatherUsageStats",
         "false",
     ]

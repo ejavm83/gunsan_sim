@@ -48,14 +48,6 @@ from config import (
     SimulationConfig,
 )
 from metrics import Event, Metrics
-from simulation import run_simulation
-from report import (
-    analyze,
-    Analysis,
-    build_layperson_visual_figures,
-    layperson_interpretation_export_markdown,
-    layperson_interpretation_markdown,
-)
 
 APP_VERSION = "0.0.3"
 APP_RELEASE_DATE = "2026.05.13"
@@ -383,9 +375,10 @@ def _inject_streamlit_help_tooltip_styles(*, show_widget_help: bool) -> None:
 
 # 마지막 시뮬 결과 보존(Streamlit 버튼은 rerun당 한 번만 True)
 _GUNSAN_LAST_RUN_BUNDLE_KEY = "gunsan_last_run_bundle"
-# Cloud 세션·WebSocket 부담 완화: analyze 이후에만 적용(요약·차트용 이벤트는 이미 반영됨)
-_GUNSAN_SESSION_MAX_EVENTS = 72_000
-_GUNSAN_SESSION_MAX_BUFFER_POINTS = 16_000
+# Cloud 세션·WebSocket 부담 완화: analyze 이후에만 적용(요약·차트용 이벤트는 이미 반영됨).
+# 이벤트가 너무 많으면 세션 직렬화·WS 프레임이 커져 브라우저 RangeError/연결 끊김이 날 수 있다.
+_GUNSAN_SESSION_MAX_EVENTS = 22_000
+_GUNSAN_SESSION_MAX_BUFFER_POINTS = 8_000
 
 
 def _event_kept_for_streamlit_session(ev: Event) -> bool:
@@ -432,6 +425,26 @@ def _compact_metrics_for_streamlit_session(metrics: Metrics) -> tuple[int, int]:
             metrics.events = sorted(critical + sampled, key=lambda e: e.time_min)
     _downsample_metric_buffers(metrics)
     return n0, len(metrics.events)
+
+
+def _thin_event_details_for_session(metrics: Metrics) -> None:
+    """session_state·WS 페이로드 축소: 상세 표에 쓰는 키만 남기고 detail 딕셔너리를 줄인다."""
+    keep = {
+        "truck",
+        "furnace",
+        "pallet",
+        "pallets",
+        "trips",
+        "units",
+        "load_kind",
+        "ton",
+        "buffer",
+    }
+    for ev in metrics.events:
+        d = ev.detail
+        if not d:
+            continue
+        ev.detail = {k: d[k] for k in keep if k in d}
 
 
 def _read_markdown_file(path: Path, default_text: str = "") -> str:
@@ -889,6 +902,8 @@ def _build_simulation_results_markdown(
     original_event_rows: int | None = None,
 ) -> str:
     """「마지막 실행 결과」 화면에 대응하는 텍스트 보고서(차트 제외)."""
+    from report import layperson_interpretation_export_markdown  # noqa: PLC0415
+
     s = analysis.summary
     flake_pct = int(round(cfg.casting.flake_ratio * 100))
     cfg_rows = [
@@ -1280,8 +1295,17 @@ def _process_detail_docx_download() -> tuple[bytes, str] | None:
     )
 
 
-def _render_simulation_inputs_layperson_guide() -> None:
-    """docs/simulation_inputs_constraints.md 요지를 표·전문용어 최소화로 풀어 쓴다."""
+def _render_simulation_inputs_layperson_guide(
+    *,
+    full_source_ui: str = "expander",
+    full_source_extra_key: str = "",
+) -> None:
+    """docs/simulation_inputs_constraints.md 요지를 표·전문용어 최소화로 풀어 쓴다.
+
+    full_source_ui:
+      - "expander": 원문을 st.expander로 접는다 (다른 expander 안에 넣지 말 것).
+      - "checkbox": 접기 대신 체크 시에만 원문을 펼친다 (상위 expander 안에서 사용).
+    """
     st.markdown(
         """
 이 시뮬레이션이 쓰는 단위는 코드와 같습니다. 시간은 분, 무게는 톤(t) 입니다.
@@ -1376,12 +1400,21 @@ def _render_simulation_inputs_layperson_guide() -> None:
     if _SIM_INPUTS_CONSTRAINTS_MD.is_file():
         st.caption(f"검증·갱신용 원문: 저장소 `{_SIM_INPUTS_CONSTRAINTS_MD.relative_to(_REPO_ROOT)}`")
 
-    with st.expander("원문 마크다운 전체 보기 (표·필드명)", expanded=False):
-        md = _read_markdown_file(_SIM_INPUTS_CONSTRAINTS_MD)
-        if md.strip():
-            st.markdown(md)
-        else:
-            st.write("파일이 비어 있거나 읽을 수 없습니다.")
+    _suffix = full_source_extra_key or "default"
+    _md = _read_markdown_file(_SIM_INPUTS_CONSTRAINTS_MD)
+    if full_source_ui == "checkbox":
+        _cb_key = f"gunsan_constraints_md_full__{_suffix}"
+        if st.checkbox("원문 마크다운 전체 보기 (표·필드명)", value=False, key=_cb_key):
+            if _md.strip():
+                st.markdown(_md)
+            else:
+                st.write("파일이 비어 있거나 읽을 수 없습니다.")
+    else:
+        with st.expander("원문 마크다운 전체 보기 (표·필드명)", expanded=False):
+            if _md.strip():
+                st.markdown(_md)
+            else:
+                st.write("파일이 비어 있거나 읽을 수 없습니다.")
 
 
 def _render_glossary_page() -> None:
@@ -1437,7 +1470,10 @@ def _render_simulation_prerun_tabs(
     with tab1:
         st.info("👈 왼쪽 사이드바에서 파라미터를 설정하고 시뮬레이션 실행 버튼을 누르세요.")
         with st.expander("📌 이 시뮬 숫자가 어디서 오나요? (쉬운 설명)", expanded=False):
-            _render_simulation_inputs_layperson_guide()
+            _render_simulation_inputs_layperson_guide(
+                full_source_ui="checkbox",
+                full_source_extra_key="prerun_tab1",
+            )
         _render_process_flow_section_header()
         _render_process_flow_chart(
             trucks_per_day=trucks_per_day,
@@ -2423,6 +2459,9 @@ with st.container(border=False):
                 outbound=outbound,
             )
 
+            from report import analyze  # noqa: PLC0415 — Cloud 첫 로드·무실행 rerun 시 SimPy/분석 지연 로드
+            from simulation import run_simulation  # noqa: PLC0415
+
             with st.status(
                 f"🔄 {sim_days}일치 시뮬레이션 실행 중",
                 expanded=True,
@@ -2490,6 +2529,7 @@ with st.container(border=False):
 
             analysis = analyze(metrics, cfg)
             _ev_total, _ev_kept = _compact_metrics_for_streamlit_session(metrics)
+            _thin_event_details_for_session(metrics)
             st.session_state[_GUNSAN_LAST_RUN_BUNDLE_KEY] = {
                 "metrics": metrics,
                 "analysis": analysis,
@@ -2515,6 +2555,11 @@ _gunsan_bundle = st.session_state.get(_GUNSAN_LAST_RUN_BUNDLE_KEY)
 _gunsan_show_results = _gunsan_bundle is not None
 
 if _gunsan_show_results and _main_page == "시뮬레이션":
+    from report import (  # noqa: PLC0415
+        build_layperson_visual_figures,
+        layperson_interpretation_markdown,
+    )
+
     metrics = _gunsan_bundle["metrics"]
     analysis = _gunsan_bundle["analysis"]
     cfg = _gunsan_bundle["cfg"]
@@ -2535,7 +2580,10 @@ if _gunsan_show_results and _main_page == "시뮬레이션":
     _evt_log_kept: int | None = _gunsan_bundle.get("event_log_kept")
 
     with st.expander("📌 이 시뮬 숫자가 어디서 오나요? (쉬운 설명)", expanded=False):
-        _render_simulation_inputs_layperson_guide()
+        _render_simulation_inputs_layperson_guide(
+            full_source_ui="checkbox",
+            full_source_extra_key="postrun",
+        )
     _render_process_flow_section_header()
     _render_process_flow_chart(
         trucks_per_day=trucks_per_day,
