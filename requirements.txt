@@ -1,5 +1,6 @@
 simpy>=4.1
-ortools>=9.10
+# 9.13+는 protobuf 6.x 필수 — google-ai-generativelanguage 등(protobuf<6)과 전역 환경 충돌 시 9.12 유지
+ortools>=9.12,<9.13
 matplotlib>=3.8
 plotly>=5.22
 pandas>=2.0

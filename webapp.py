@@ -53,7 +53,20 @@ from report import (
 )
 from pdf_report import markdown_simulation_report_to_pdf
 
-_BUILD_INFO_TEXT = "(주) 지엠티 김길용 수석, v0.0.2 (2026.05.09)"
+APP_VERSION = "0.0.3"
+APP_RELEASE_DATE = "2026.05.13"
+# (버전, 날짜, 요약) — 최신이 위. 배포 시마다 한 줄 추가·정리하면 된다.
+APP_VERSION_HISTORY: tuple[tuple[str, str, str], ...] = (
+    (
+        APP_VERSION,
+        APP_RELEASE_DATE,
+        "시뮬레이션·메트릭·설정·웹 대시보드·애니메이트 보완, 의존성(requirements) 정리.",
+    ),
+    ("0.0.2", "2026-05-12", "PDF 보고서 모듈 추가, 웹 대시보드·시뮬레이션·문서 확장."),
+    ("0.0.1", "2026-05-07~09", "공정 시각화·접속 게이트(비밀번호), 주말 반복 개선."),
+    ("0.0.0", "2026-05-06", "SimPy 시뮬 초기 구성, Streamlit 대시보드·용어/문서 섹션, 버전 워터마크."),
+)
+_BUILD_INFO_TEXT = f"(주) 지엠티 김길용 수석, v{APP_VERSION} ({APP_RELEASE_DATE})"
 _REPO_ROOT = Path(__file__).resolve().parent
 _PROCESS_DETAIL_MD = _REPO_ROOT / "군산 공정 상세-김홍태보완.md"
 _SIMPY_CPSAT_MD = _REPO_ROOT / "docs" / "simpy_cpsat_overview.md"
@@ -66,6 +79,13 @@ _PLOTLY_HOVERLABEL = dict(
     bordercolor="rgb(56,189,248)",
     font=dict(color="rgb(241,245,249)", size=14),
 )
+
+
+def _version_history_markdown_bullets() -> str:
+    """웹·Markdown 보고서 공통으로 쓰는 버전 이력(불릿 목록)."""
+    return "\n".join(
+        f"- **v{ver}** ({date}) — {note}" for ver, date, note in APP_VERSION_HISTORY
+    )
 
 
 def _style_layperson_result_figure(fig: go.Figure) -> go.Figure:
@@ -242,7 +262,7 @@ div[data-testid="stAlert"] {
 .gunsan-callout strong {
   color: rgb(240, 249, 255);
 }
-/* 세부공정 프로세스: 제목·설명·파이프라인 직전까지 세로 여백 축소 */
+/* 세부공정 프로세스: 제목·설명·Graphviz 차트 직전까지 세로 여백 축소 */
 div[data-testid="stMarkdownContainer"] .gunsan-pf-section-wrap {
   margin: -0.2rem 0 0;
 }
@@ -263,7 +283,7 @@ div[data-testid="stMarkdownContainer"] .gunsan-pf-section-wrap .gunsan-pf-sectio
 }
 div[data-testid="stElementContainer"]:has(.gunsan-pf-section-wrap)
   + div[data-testid="stElementContainer"] {
-  margin-top: -0.4rem !important;
+  margin-top: -0.55rem !important;
 }
 /* 메인 본문: 가로 공간 최대 활용(와이드 모드 보조) + 기본 블록 여백 완화 */
 section[data-testid="stMain"] > div {
@@ -279,9 +299,19 @@ section[data-testid="stMain"] .block-container {
 section[data-testid="stMain"] {
   width: 100% !important;
 }
-/* components.html: 기본 래퍼가 iframe보다 넓은 높이를 잡지 않도록 여백만 완화 */
+/* components.html: iframe 아래 불필요한 세로 여백 축소 + 다음 블록 h3 상단 여백 완화 */
+div[data-testid="stElementContainer"]:has([data-testid="stIFrame"]) {
+  margin-bottom: 0 !important;
+}
 div[data-testid="stIFrame"] {
-  margin-bottom: 0.15rem !important;
+  margin-bottom: 0 !important;
+}
+section[data-testid="stMain"]
+  div[data-testid="stElementContainer"]:has([data-testid="stIFrame"])
+  + div[data-testid="stElementContainer"]
+  [data-testid="stMarkdownContainer"]
+  h3:first-of-type {
+  margin-top: 0.42rem !important;
 }
 /* 메인 본문 마크다운: 장문 읽기 피로 완화(살짝 낮은 대비 + 넉넉한 행간·목록 간격) */
 section[data-testid="stMain"] [data-testid="stMarkdownContainer"] p {
@@ -419,6 +449,233 @@ def _format_kpi_minutes(minutes: float) -> str:
         parts.append(f"{h}시간")
     parts.append(f"{m}분")
     return " ".join(parts)
+
+
+def _render_balance_analysis(summary: dict) -> None:
+    """입출 물량 균형(WIP) 분석 섹션을 렌더링한다.
+
+    손실 없는 공정이므로 [입고 = 출하 + 공정 중 잔량] 이 되어야 한다는 점을
+    기준으로, 입고/출하 톤수·트럭 적재율·공정 중 잔량 분포·자동 진단을
+    한 화면에서 보여 준다.
+    """
+    inbound_ton = float(summary.get("inbound_ton", 0.0))
+    dispatched_ton = float(summary.get("dispatched_ton", 0.0))
+    wip_total = float(summary.get("wip_total_ton", 0.0))
+    unaccounted = float(summary.get("unaccounted_ton", 0.0))
+    balance_pct = float(summary.get("balance_dispatched_pct", 0.0))
+    wip_pct = float(summary.get("wip_share_pct", 0.0))
+    trucks_in = int(summary.get("trucks_in_processed", 0))
+    trucks_out = int(summary.get("trucks_out_dispatched", 0))
+    trucks_in_per_day = float(summary.get("trucks_in_per_day", 0.0))
+    trucks_out_per_day = float(summary.get("trucks_out_per_day", 0.0))
+    inbound_ton_per_day = float(summary.get("inbound_ton_per_day", 0.0))
+    dispatched_ton_per_day = float(summary.get("dispatched_ton_per_day", 0.0))
+    avg_in_per_truck = float(summary.get("avg_inbound_per_truck", 0.0))
+    avg_out_per_truck = float(summary.get("avg_outbound_per_truck", 0.0))
+    in_fill = float(summary.get("inbound_fill_rate_pct", 0.0))
+    out_fill = float(summary.get("outbound_fill_rate_pct", 0.0))
+    in_cap = float(summary.get("inbound_payload_ton", 0.0))
+    out_cap = float(summary.get("outbound_truck_capacity_ton", 0.0))
+
+    st.header("⚖️ 입출 물량 균형 (입고 = 출하 + 공정 중 잔량)")
+    st.caption(
+        "스크랩→완제품 공정은 손실이 없으므로, 입고된 톤수는 결국 출하 톤수와 "
+        "시뮬 종료 시점에 공정 안에 갇혀 있는 잔량(WIP)의 합과 같아야 합니다. "
+        "두 값의 차이를 통해 공장이 입고 페이스를 따라잡고 있는지, 그리고 어디에서 "
+        "물량이 쌓이고 있는지를 한눈에 확인할 수 있습니다."
+    )
+
+    # ---- 1차 KPI 4열: 입고 / 출하 / 비율 / WIP ----
+    _c1 = st.columns(4)
+    _c1[0].metric(
+        "입고 누적",
+        f"{inbound_ton:,.1f} t",
+        delta=f"트럭 {trucks_in:,}대",
+        delta_color="off",
+        help="시뮬 기간 동안 하역까지 끝난 입고 트럭의 누적 적재량입니다.",
+    )
+    _c1[1].metric(
+        "출하 누적",
+        f"{dispatched_ton:,.1f} t",
+        delta=f"트럭 {trucks_out:,}대",
+        delta_color="off",
+        help="완제품을 적재해 출고 처리까지 끝난 출하 트럭의 누적 적재량입니다.",
+    )
+    _c1[2].metric(
+        "출하 / 입고 비율",
+        f"{balance_pct:.1f} %",
+        delta="이론 100%",
+        delta_color="off",
+        help="손실 없는 공정이므로 시뮬을 충분히 길게 돌리면 100% 에 수렴해야 합니다. "
+             "낮으면 그만큼 물량이 공정 중간(WIP)에 갇혀 있습니다.",
+    )
+    _c1[3].metric(
+        "공정 중 잔량 (WIP)",
+        f"{wip_total:,.1f} t",
+        delta=f"입고 대비 {wip_pct:.1f}%",
+        delta_color="off",
+        help="시뮬 종료 시점에 선별·압착·파레트 버퍼·용해 진행 중·완제품 야적장에 "
+             "남아 있는 모든 물량의 합입니다. 큰 값일수록 공정이 입고를 못 따라잡고 있다는 신호입니다.",
+    )
+
+    # ---- 2차 KPI 4열: 트럭당 평균 / 일별 페이스 ----
+    _c2 = st.columns(4)
+    _c2[0].metric(
+        "입고 트럭당 평균 적재",
+        f"{avg_in_per_truck:.1f} t",
+        delta=f"적재율 {in_fill:.1f}% (만재 {in_cap:.0f} t)",
+        delta_color="off",
+        help="입고는 보통 만재로 들어오므로 100% 에 가까워야 정상입니다.",
+    )
+    _c2[1].metric(
+        "출하 트럭당 평균 적재",
+        f"{avg_out_per_truck:.1f} t",
+        delta=f"적재율 {out_fill:.1f}% (만재 {out_cap:.0f} t)",
+        delta_color="off",
+        help="출하 트럭이 야적장에서 실어 가는 평균 톤수입니다. "
+             "낮다면 트럭은 자주 오는데 실을 완제품이 부족하다는 뜻이고, "
+             "100% 면 야적장 재고가 충분합니다.",
+    )
+    _c2[2].metric(
+        "입고 페이스",
+        f"{inbound_ton_per_day:.1f} t/일",
+        delta=f"{trucks_in_per_day:.1f} 대/일",
+        delta_color="off",
+        help="시뮬 기간 평균 일별 입고 톤수와 트럭 수입니다.",
+    )
+    _c2[3].metric(
+        "출하 페이스",
+        f"{dispatched_ton_per_day:.1f} t/일",
+        delta=f"{trucks_out_per_day:.1f} 대/일",
+        delta_color="off",
+        help="시뮬 기간 평균 일별 출하 톤수와 트럭 수입니다. "
+             "입고 페이스보다 크게 낮으면 공정 중 잔량이 쌓이고 있습니다.",
+    )
+
+    # ---- WIP 분포 막대 차트 + 표 ----
+    wip_components: list[tuple[str, float]] = [
+        ("선별 대기 (하역 직후)", float(summary.get("wip_sort_queue_ton", 0.0))),
+        ("압착 대기 (sub-pile)", float(summary.get("wip_press_queue_ton", 0.0))),
+        ("파레트 버퍼", float(summary.get("wip_pallet_buffer_ton", 0.0))),
+        ("용해 진행 중", float(summary.get("wip_melting_in_progress_ton", 0.0))),
+        ("Flake 야적장", float(summary.get("wip_flake_buffer_ton", 0.0))),
+        ("SCR 야적장", float(summary.get("wip_scr_buffer_ton", 0.0))),
+    ]
+    top_wip_name, top_wip_ton = max(wip_components, key=lambda x: x[1])
+
+    _chart_col, _table_col = st.columns([2, 1])
+    with _chart_col:
+        st.markdown("##### 공정 중 잔량(WIP)이 어디에 쌓여 있나요?")
+        fig = go.Figure(
+            data=[
+                go.Bar(
+                    x=[v for _, v in wip_components],
+                    y=[n for n, _ in wip_components],
+                    orientation="h",
+                    marker=dict(
+                        color=[
+                            "#ef4444" if (n == top_wip_name and v > 0) else "#60a5fa"
+                            for n, v in wip_components
+                        ]
+                    ),
+                    text=[f"{v:,.1f} t" for _, v in wip_components],
+                    textposition="outside",
+                    hovertemplate="%{y}: %{x:,.1f} t<extra></extra>",
+                )
+            ]
+        )
+        fig.update_layout(
+            height=320,
+            margin=dict(l=10, r=10, t=10, b=10),
+            xaxis_title="잔량 (t)",
+            yaxis=dict(autorange="reversed"),
+            showlegend=False,
+        )
+        st.plotly_chart(fig, use_container_width=True, key="gunsan_balance_wip_bar")
+        st.caption(
+            f"가장 많이 적체된 구간은 **[{top_wip_name}] ({top_wip_ton:,.1f} t)** 입니다. "
+            "여기를 풀어 주는 것이 1차 병목 해소의 가장 빠른 방법입니다."
+        )
+
+    with _table_col:
+        st.markdown("##### 물량 보존 검산표")
+        import pandas as _pd
+        _df = _pd.DataFrame(
+            [
+                {"구분": "입고 누적", "톤수": inbound_ton},
+                {"구분": "(-) 출하 누적", "톤수": -dispatched_ton},
+                {"구분": "(-) 공정 중 잔량 (WIP)", "톤수": -wip_total},
+                {"구분": "= 미설명 잔차 (적재 중)", "톤수": unaccounted},
+            ]
+        )
+        st.dataframe(
+            _df.style.format({"톤수": "{:+,.1f} t"}),
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.caption(
+            "이론적으로 잔차는 0 이어야 하지만, 시뮬 종료 시점에 적재·계근이 "
+            "진행 중인 트럭이 있으면 ±수십 t 정도 남을 수 있습니다."
+        )
+
+    # ---- 자동 진단 (CLI 의 [해석] 섹션과 동일 규칙) ----
+    st.markdown("##### 🔍 자동 진단")
+    if inbound_ton <= 0:
+        st.warning("입고 누적이 0 입니다. 입고 트럭 설정 또는 시뮬 기간을 확인하세요.")
+    else:
+        if balance_pct < 60.0:
+            st.warning(
+                f"**출하/입고 비율이 {balance_pct:.1f}% 로 낮습니다.** "
+                f"공정 중 잔량이 {wip_pct:.1f}% 쌓여 있고, "
+                f"가장 큰 적체는 **[{top_wip_name}] ({top_wip_ton:,.0f} t)** 입니다. "
+                "여기를 1차 병목으로 보고 개선 검토를 권장합니다."
+            )
+        elif balance_pct < 90.0:
+            st.info(
+                f"**출하/입고 비율 {balance_pct:.1f}%** — 시뮬 기간에 대부분이 빠져나갔지만 "
+                f"공정 중 {wip_pct:.1f}% 가 잔류 중입니다. "
+                f"가장 큰 잔류 위치: [{top_wip_name}] ({top_wip_ton:,.0f} t)."
+            )
+        else:
+            st.success(
+                f"**출하/입고 비율 {balance_pct:.1f}%** — 입출 물량이 거의 균형을 이룹니다."
+            )
+
+        if out_cap > 0:
+            if out_fill < 80.0:
+                st.warning(
+                    f"**출하 트럭 평균 적재가 만재의 {out_fill:.0f}% 수준입니다.** "
+                    "야적장 재고가 트럭 도착보다 느리게 채워지는 신호입니다 "
+                    "(생산 능력 부족 또는 출하 도착 빈도 과다)."
+                )
+            elif out_fill > 98.0:
+                st.success(
+                    f"출하 트럭이 거의 항상 만재({out_fill:.0f}%)로 나가고 있어, "
+                    "야적장 재고는 충분히 확보되어 있습니다."
+                )
+
+        if in_cap > 0 and in_fill < 99.0:
+            st.warning(
+                f"입고 트럭 평균 적재가 만재의 {in_fill:.0f}% 입니다 "
+                "(보통 입고는 만재로 들어오므로 100% 에 가까워야 정상)."
+            )
+
+    # ---- 공식 해석 가이드 ----
+    with st.expander("📘 해석 가이드 — 이 숫자들을 어떻게 읽나요?", expanded=False):
+        st.markdown(
+            """
+- **물량 보존**: 손실 없는 공정이므로 이론상  `입고 = 출하 + 공정 중 잔량(WIP)`.
+  시뮬을 무한히 길게 돌리면 출하/입고 비율은 100% 에 수렴합니다.
+- **출하/입고 비율이 낮다** → 공정 안에 물량이 갇혀 있다는 뜻입니다.
+  *어디에* 갇혀 있는지는 위의 WIP 막대 차트에서 가장 긴 막대를 보면 됩니다.
+- **출하 적재율이 낮다 (만재 미달)** → 트럭은 자주 오는데 실을 완제품이 부족합니다.
+  생산 능력(반사로·압착)을 늘리거나 출하 트럭 도착 간격을 늘려야 합니다.
+- **출하 적재율이 항상 만재**인데도 출하/입고 비율이 낮다 → 출하 트럭 도착 빈도가
+  부족하다는 신호입니다. 평균 간격을 줄이세요.
+- **미설명 잔차**는 시뮬 종료 시점에 적재·계근이 진행 중인 트럭의 임시 보유분으로,
+  보통 수십 톤 수준이며 시뮬 기간을 늘리면 비율이 더 작아집니다.
+"""
+        )
 
 
 def _sim_clock_label(time_min: float) -> str:
@@ -705,6 +962,10 @@ def _build_simulation_results_markdown(
         "Plotly 차트(가동률, 버퍼 시계열, 반사로 Gantt, 누적 트럭, 체류 분포, 일별 생산 등)는 "
         "벡터 그래픽이라 이 Markdown에는 넣지 않았습니다. 웹 대시보드 각 차트 아래 "
         "「HTML 다운로드」로 동일 실행 결과의 그래프를 저장할 수 있습니다.",
+        "",
+        "## 10. 앱 버전 이력",
+        "",
+        _version_history_markdown_bullets(),
         "",
     ]
     return "\n".join(parts).strip() + "\n"
@@ -1112,13 +1373,12 @@ def _render_simulation_prerun_tabs(
         with st.expander("📌 이 시뮬 숫자가 어디서 오나요? (쉬운 설명)", expanded=False):
             _render_simulation_inputs_layperson_guide()
         _render_process_flow_section_header()
-        _render_process_flow_pipeline_html(
+        _render_process_flow_chart(
             trucks_per_day=trucks_per_day,
             payload_ton=payload_ton,
             flake_ratio=flake_ratio,
             furnace_count=furnace_count,
             bottleneck=None,
-            show_tooltips=True,
         )
         st.markdown("""
         ### 시뮬레이션 개요
@@ -1377,6 +1637,9 @@ def _build_process_graphviz(
     is_press = "압착" in bottleneck_text
     is_furnace = "반사로" in bottleneck_text
     is_outbound = "출하" in bottleneck_text
+    is_weigh = "계근" in bottleneck_text
+    is_sort = "선별" in bottleneck_text
+    is_elevator = "엘리베이터" in bottleneck_text
 
     sc = DEFAULT_CONFIG.sorting
     mc = DEFAULT_CONFIG.melting
@@ -1394,14 +1657,14 @@ digraph G {{
   rankdir=TB;
   graph [pad=0.45, nodesep=0.95, ranksep=1.45, bgcolor="white"];
   node [fontname="Malgun Gothic", fontsize=16, shape=box, style="rounded,filled", color="#5b6b7a", fillcolor="#eef6ff", penwidth=2, margin="0.32,0.24"];
-  edge [color="#6b7280", penwidth=1.8, arrowsize=0.85];
+  edge [color="#475569", penwidth=2.4, arrowsize=1.0];
 
   inbound   [label="트럭 입고\\n09~18시·오전80%\\n{trucks_per_day}대/일 · {total_inbound_ton:.0f}t/일"];
-  weigh     [label="1차/2차 계근\\n각 5분"];
-  unload    [label="하역\\n20분 · 베이 운영"];
-  sorting   [label="선별\\n30분 · 8개 sub-pile"];
+  weigh     [{style(is_weigh, "#eef6ff")} label="1차/2차 계근\\n각 5분"];
+  unload    [{style(is_weigh, "#eef6ff")} label="하역\\n20분 · 베이 운영"];
+  sorting   [{style(is_sort, "#eef6ff")} label="선별\\n30분 · 8개 sub-pile"];
   press     [{style(is_press, "#eaf5ff")} label="압착/파레트\\n0.5t 사이클 {press_cycle:.1f}분\\n파레트 버퍼"];
-  elevator  [label="엘리베이터\\n2파레트/{el_cycle:.0f}분"];
+  elevator  [{style(is_elevator, "#eef6ff")} label="엘리베이터\\n2파레트/{el_cycle:.0f}분"];
   furnace   [{style(is_furnace, "#fff4e8")} label="장입/용해\\n반사로 {furnace_count}대 · 병목 {melt_h:.1f}h"];
   casting   [label="하이브리드 주조\\nFlake {flake_ratio}% · SCR {100 - flake_ratio}%"];
 
@@ -1427,31 +1690,10 @@ digraph G {{
 """
 
 
-def _process_flow_stage_is_bottleneck(stage_key: str, bottleneck: str | None) -> bool:
-    """`analyze()` 가 넘기는 자원명(한글)과 공정 카드 키를 맞춘다."""
-    if not bottleneck:
-        return False
-    bn = bottleneck
-    mapping: dict[str, tuple[str, ...]] = {
-        "truck": (),
-        "weigh": ("계근",),
-        "sort": ("선별",),
-        "press": ("압착",),
-        "elevator": ("엘리베이터",),
-        "furnace": ("반사로",),
-        "casting": (),
-        "flake_out": ("출하",),
-        "scr_out": ("출하",),
-    }
-    for needle in mapping.get(stage_key, ()):
-        if needle in bn:
-            return True
-    return False
-
-
 _PROCESS_FLOW_SECTION_CAPTION = (
     "슬라이더 값이 반영된 입고→출하 흐름입니다. "
-    "시뮬 실행 후에는 가동률 기준 병목 자원에 해당하는 단계가 붉게 강조됩니다."
+    "Graphviz(DOT)로 단계·화살표·분기를 자동 배치합니다. "
+    "시뮬 실행 후 병목 진단 구간에서는 해당 자원 노드가 붉게 강조됩니다."
 )
 
 
@@ -1467,327 +1709,28 @@ def _render_process_flow_section_header() -> None:
     )
 
 
-def _render_process_flow_pipeline_html(
+def _render_process_flow_chart(
     trucks_per_day: int,
     payload_ton: float,
     flake_ratio: int,
     furnace_count: int,
     *,
     bottleneck: str | None = None,
-    show_tooltips: bool = True,
     height: int | None = None,
 ) -> None:
-    """세부 공정을 Plotly 대신 HTML 파이프라인 카드로 표시(다크 테마·슬라이더 값 반영)."""
-    esc = html_module.escape
-    total_inbound_ton = trucks_per_day * payload_ton
-    flake_ton = total_inbound_ton * (flake_ratio / 100.0)
-    scr_ton = max(total_inbound_ton - flake_ton, 0.0)
+    """세부 공정을 Graphviz(DOT)와 d3-graphviz로 표시한다.
 
-    sc = DEFAULT_CONFIG.sorting
-    mc = DEFAULT_CONFIG.melting
-    press_cycle = sc.forklift_load_min + sc.press_min_per_block + sc.pallet_stack_min
-    el_cycle = mc.elevator_cycle_min
-    melt_h = mc.melting_min / 60.0
-
-    def card(
-        key: str,
-        title: str,
-        desc: str,
-        *,
-        compact: bool = False,
-    ) -> str:
-        is_bn = _process_flow_stage_is_bottleneck(key, bottleneck)
-        bn_cls = " gunsan-pf-card--bottleneck" if is_bn else ""
-        sz = " gunsan-pf-card--compact" if compact else ""
-        tip = f' title="{esc(desc)}"' if show_tooltips else ""
-        badge = (
-            '<span class="gunsan-pf-bn-badge" aria-label="병목 구간">병목</span>'
-            if is_bn
-            else ""
-        )
-        return (
-            f'<article class="gunsan-pf-card{bn_cls}{sz}"{tip}>'
-            f"{badge}"
-            f'<h4 class="gunsan-pf-title">{esc(title)}</h4>'
-            f'<p class="gunsan-pf-desc">{esc(desc)}</p>'
-            f"</article>"
-        )
-
-    def conn() -> str:
-        return '<span class="gunsan-pf-arrow" aria-hidden="true"></span>'
-
-    main_cards: list[tuple[str, str, str]] = [
-        ("truck", "트럭 입고", f"09~18h·오전 80% · {trucks_per_day}대/일 · {total_inbound_ton:.0f}t/일"),
-        ("weigh", "계근/하역", "계근 5분 · 하역 20분"),
-        ("sort", "선별", "30분 · 8 sub-pile"),
-        ("press", "압착/파레트", f"0.5t {press_cycle:.1f}분/사이클 · 버퍼"),
-        ("elevator", "엘리베이터", f"2파레트 / {el_cycle:.0f}분"),
-        ("furnace", "장입/용해", f"반사로 {furnace_count}대 · 병목 약 {melt_h:.1f}h"),
-        ("casting", "하이브리드 주조", f"Flake {flake_ratio}% · SCR {100 - flake_ratio}%"),
-    ]
-    main_html = conn().join(card(k, t, d) for k, t, d in main_cards)
-
-    flake_track = "".join(
-        [
-            card("flake_yard", "Flake 야적", f"{flake_ton:.0f} t", compact=True),
-            conn(),
-            card("flake_out", "Flake 출하", "상차 → 계근 → 출고", compact=True),
-        ]
+    HTML/CSS 카드 대신 DOT 레이아웃으로 단계·화살표·주조 후 분기를 자동 배치한다.
+    """
+    dot = _build_process_graphviz(
+        trucks_per_day,
+        payload_ton,
+        flake_ratio,
+        furnace_count,
+        bottleneck=bottleneck,
     )
-    scr_track = "".join(
-        [
-            card("scr_yard", "SCR 야적", f"{scr_ton:.0f} t", compact=True),
-            conn(),
-            card("scr_out", "SCR 출하", "상차 → 계근 → 출고", compact=True),
-        ]
-    )
-
-    foot = (
-        "상세 흐름: 입고 → 계근/하역 → 선별 → 압착/버퍼 → 엘리베이터 → "
-        "용해(12h) → 주조 → 야적 → 상차/출하"
-    )
-    bn_note = ""
-    if bottleneck:
-        bn_note = (
-            f'<p class="gunsan-pf-bn">병목 자원: <strong>{esc(bottleneck)}</strong> '
-            f"(해당 단계는 <strong>병목</strong> 표기·붉은 강조로 구분됩니다)</p>"
-        )
-
-    html = f"""
-<div class="gunsan-pf-root">
-  <style>
-    .gunsan-pf-root {{
-      font-family: "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif;
-      background: rgba(15, 23, 42, 0.97);
-      border: 1px solid rgba(51, 65, 85, 0.75);
-      border-radius: 12px;
-      padding: 0.5rem 0.65rem 0.4rem;
-      color: #e2e8f0;
-      box-sizing: border-box;
-    }}
-    .gunsan-pf-root * {{ box-sizing: border-box; }}
-    .gunsan-pf-row {{
-      display: flex;
-      flex-wrap: wrap;
-      align-items: stretch;
-      justify-content: flex-start;
-      gap: 0.15rem 0;
-      row-gap: 0.5rem;
-    }}
-    .gunsan-pf-main {{
-      flex-wrap: nowrap;
-      align-items: stretch;
-      justify-content: flex-start;
-      overflow-x: auto;
-      overflow-y: hidden;
-      padding-bottom: 0.28rem;
-      margin: 0 -0.15rem;
-      padding-left: 0.15rem;
-      padding-right: 0.15rem;
-      border-bottom: 1px solid rgba(71, 85, 105, 0.45);
-      margin-bottom: 0.28rem;
-      scrollbar-width: thin;
-      scrollbar-color: rgba(100,116,139,0.6) transparent;
-    }}
-    .gunsan-pf-main::-webkit-scrollbar {{
-      height: 6px;
-    }}
-    .gunsan-pf-main::-webkit-scrollbar-thumb {{
-      background: rgba(100, 116, 139, 0.55);
-      border-radius: 4px;
-    }}
-    .gunsan-pf-main .gunsan-pf-card {{
-      flex: 0 0 auto;
-      width: clamp(5.65rem, 11.5vw, 8.85rem);
-      max-width: none;
-      min-width: 5.65rem;
-    }}
-    .gunsan-pf-main .gunsan-pf-arrow {{
-      flex: 0 0 1rem;
-    }}
-    .gunsan-pf-card {{
-      flex: 1 1 6.5rem;
-      min-width: 5.75rem;
-      max-width: 11rem;
-      margin: 0.1rem 0.05rem;
-      padding: 0.45rem 0.4rem 0.42rem;
-      border-radius: 12px;
-      background: linear-gradient(180deg, rgba(30,41,59,0.95) 0%, rgba(15,23,42,0.88) 100%);
-      border: 1px solid color-mix(in srgb, var(--stage-accent) 55%, transparent);
-      box-shadow: 0 4px 18px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.04);
-      position: relative;
-      overflow: hidden;
-    }}
-    .gunsan-pf-card::before {{
-      content: "";
-      position: absolute;
-      left: 0; right: 0; top: 0;
-      height: 3px;
-      background: linear-gradient(90deg, var(--stage-accent), transparent);
-      opacity: 0.9;
-    }}
-    .gunsan-pf-card--compact {{
-      flex: 1 1 8rem;
-      max-width: 14rem;
-      padding: 0.38rem 0.35rem 0.36rem;
-    }}
-    .gunsan-pf-card--bottleneck {{
-      border: 2px solid #ef4444 !important;
-      background: rgba(69, 10, 10, 0.55) !important;
-      box-shadow:
-        0 0 0 1px rgba(252, 165, 165, 0.55),
-        0 0 22px rgba(239, 68, 68, 0.35),
-        0 4px 16px rgba(0,0,0,0.45) !important;
-    }}
-    .gunsan-pf-card--bottleneck::before {{
-      height: 4px !important;
-      background: linear-gradient(90deg, #ef4444, #f97316) !important;
-      opacity: 1 !important;
-    }}
-    .gunsan-pf-card--bottleneck .gunsan-pf-title {{
-      color: #fecaca;
-      padding-right: 2.35rem;
-    }}
-    .gunsan-pf-card--bottleneck .gunsan-pf-desc {{
-      color: #fca5a5;
-    }}
-    .gunsan-pf-bn-badge {{
-      position: absolute;
-      top: 0.32rem;
-      right: 0.32rem;
-      font-size: 0.56rem;
-      font-weight: 800;
-      letter-spacing: 0.04em;
-      color: #450a0a;
-      background: #fecaca;
-      padding: 0.1rem 0.32rem;
-      border-radius: 4px;
-      line-height: 1.2;
-      z-index: 1;
-    }}
-    .gunsan-pf-title {{
-      margin: 0 0 0.25rem 0;
-      font-size: 0.82rem;
-      font-weight: 700;
-      letter-spacing: -0.02em;
-      color: #f1f5f9;
-      line-height: 1.25;
-    }}
-    .gunsan-pf-card--compact .gunsan-pf-title {{ font-size: 0.78rem; }}
-    .gunsan-pf-desc {{
-      margin: 0;
-      font-size: 0.68rem;
-      line-height: 1.45;
-      color: #94a3b8;
-    }}
-    .gunsan-pf-card--compact .gunsan-pf-desc {{ font-size: 0.64rem; }}
-    .gunsan-pf-arrow {{
-      flex: 0 0 1.1rem;
-      align-self: center;
-      width: 1.1rem;
-      height: 1.1rem;
-      margin: 0 0.05rem;
-      flex-shrink: 0;
-      opacity: 0.85;
-      background: no-repeat center / contain
-        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12h14M13 6l6 6-6 6'/%3E%3C/svg%3E");
-    }}
-    .gunsan-pf-bridge {{
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 0;
-      padding: 0 0 0.15rem;
-      margin-top: -0.2rem;
-    }}
-    .gunsan-pf-bridge-arrow {{
-      width: 1.1rem;
-      height: 1.15rem;
-      opacity: 0.88;
-      flex-shrink: 0;
-      background: no-repeat center / contain
-        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 5v14M6 13l6 6 6-6'/%3E%3C/svg%3E");
-    }}
-    .gunsan-pf-split-label {{
-      text-align: center;
-      font-size: 0.7rem;
-      color: #64748b;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      margin: 0 0 0.22rem;
-    }}
-    .gunsan-pf-split {{
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 0.42rem 0.75rem;
-    }}
-    @media (max-width: 720px) {{
-      .gunsan-pf-split {{ grid-template-columns: 1fr; }}
-    }}
-    .gunsan-pf-track {{
-      display: flex;
-      flex-wrap: nowrap;
-      align-items: stretch;
-      justify-content: flex-start;
-      gap: 0;
-      overflow-x: auto;
-      overflow-y: hidden;
-      padding: 0.18rem 0.18rem;
-      border-radius: 10px;
-      background: rgba(15, 23, 42, 0.55);
-      border: 1px dashed rgba(71, 85, 105, 0.55);
-      scrollbar-width: thin;
-      scrollbar-color: rgba(100,116,139,0.5) transparent;
-    }}
-    .gunsan-pf-track::-webkit-scrollbar {{
-      height: 5px;
-    }}
-    .gunsan-pf-track::-webkit-scrollbar-thumb {{
-      background: rgba(100, 116, 139, 0.45);
-      border-radius: 4px;
-    }}
-    .gunsan-pf-track .gunsan-pf-card--compact {{
-      flex: 0 0 auto;
-      width: clamp(6.5rem, 28vw, 10.5rem);
-      max-width: none;
-    }}
-    .gunsan-pf-track .gunsan-pf-arrow {{
-      flex: 0 0 0.95rem;
-    }}
-    .gunsan-pf-foot {{
-      margin: 0.18rem 0 0;
-      font-size: 0.72rem;
-      line-height: 1.5;
-      color: #64748b;
-      text-align: center;
-    }}
-    .gunsan-pf-bn {{
-      margin: 0.2rem 0 0;
-      font-size: 0.78rem;
-      text-align: center;
-      color: #fca5a5;
-    }}
-    .gunsan-pf-bn strong {{ color: #fecaca; }}
-  </style>
-  <div class="gunsan-pf-row gunsan-pf-main" role="list">
-    {main_html}
-  </div>
-  <div class="gunsan-pf-bridge" aria-hidden="true">
-    <span class="gunsan-pf-bridge-arrow"></span>
-  </div>
-  <div class="gunsan-pf-split-label">주조 이후 · 제품별 출하</div>
-  <div class="gunsan-pf-split">
-    <div class="gunsan-pf-track" role="group" aria-label="Flake 경로">{flake_track}</div>
-    <div class="gunsan-pf-track" role="group" aria-label="SCR 경로">{scr_track}</div>
-  </div>
-  {bn_note}
-  <p class="gunsan-pf-foot">{esc(foot)}</p>
-</div>
-"""
-    # 고정 높이가 실제 레이아웃보다 크면 iframe 아래에 큰 빈 영역이 생김(탭 상단 등).
-    iframe_h = height if height is not None else (452 if bottleneck else 400)
-    components.html(html, height=iframe_h, scrolling=False)
+    h = height if height is not None else (460 if bottleneck else 400)
+    _render_graphviz_chart(dot, height=h, fit=True, scrolling=True)
 
 
 def _build_process_timeline_figure(
@@ -2360,6 +2303,8 @@ with st.container(border=False):
         """,
         unsafe_allow_html=True,
     )
+    with st.expander("앱 버전 이력", expanded=False):
+        st.markdown(_version_history_markdown_bullets())
     st.markdown("""
 스크랩 구리 입고(09~18h·오전 80%) → 선별/압착 → 장입/용해(병목 약 13h) → 하이브리드 주조 → 완제품 출하(20t·오전 80%)의
 5단계 공정을 SimPy 이산사건 시뮬레이션으로 모델링합니다.
@@ -2429,9 +2374,55 @@ with st.container(border=False):
                     "실제 벽시계는 보통 수 초 이내입니다. 가상 시간은 설정한 일수만큼 "
                     "한 번에 재생됩니다."
                 )
+                # 진행률 프로그래스 바 — env.run 을 100단계로 쪼개 갱신
+                progress_placeholder = st.empty()
+                progress_bar = progress_placeholder.progress(
+                    0.0,
+                    text="⏱️ 0% — 시뮬레이션 준비 중…",
+                )
+                horizon_min = float(cfg.sim_horizon_min)
+                # 콜백은 SimPy 루프 안에서 자주 불리므로(기본 100회) 화면이
+                # 너무 잦은 rerun 없이 부드럽게 갱신되도록 최소 1% 간격을 둔다.
+                _last_pct = {"v": -1}
                 t0 = time.perf_counter()
-                metrics = run_simulation(cfg, progress=sim_status.write)
+
+                def _on_tick(fraction: float, sim_time_min: float, m) -> None:
+                    pct = max(0, min(100, int(round(fraction * 100))))
+                    if pct == _last_pct["v"] and pct < 100:
+                        return
+                    _last_pct["v"] = pct
+                    day = int(sim_time_min // 1440) + 1
+                    hh = int((sim_time_min % 1440) // 60)
+                    mm = int(sim_time_min % 60)
+                    elapsed_s = time.perf_counter() - t0
+                    text = (
+                        f"⏱️ {pct:3d}% — 가상 {day}일차 {hh:02d}:{mm:02d} "
+                        f"(누적 {sim_time_min / 60:.1f}h / {horizon_min / 60:.0f}h) · "
+                        f"입고 {m.truck_in_done}대 · 압착 파레트 {m.pallets_produced}개 · "
+                        f"용해 배치 {m.batches_completed}/{m.batches_started} · "
+                        f"출하 {m.truck_out_done}대 · 실시간 {elapsed_s:.1f}s"
+                    )
+                    progress_bar.progress(min(fraction, 1.0), text=text)
+
+                metrics = run_simulation(
+                    cfg,
+                    progress=sim_status.write,
+                    on_tick=_on_tick,
+                    tick_steps=100,
+                )
                 elapsed = time.perf_counter() - t0
+                progress_bar.progress(
+                    1.0,
+                    text=(
+                        f"✅ 100% — 가상 {cfg.sim_days}일 · 사건 {len(metrics.events):,}건 · "
+                        f"실시간 {elapsed:.2f}s"
+                    ),
+                )
+                # 짧은 실행에서도 프로그래스 바가 한 번에 사라지지 않도록 최소 표시 시간(벽시계) 확보
+                _min_progress_visible_s = 2.0
+                _pad = max(0.0, _min_progress_visible_s - elapsed)
+                if _pad > 0:
+                    time.sleep(_pad)
                 sim_status.update(
                     label=f"✅ 시뮬레이션 완료 (약 {elapsed:.2f}초)",
                     state="complete",
@@ -2484,13 +2475,12 @@ if _gunsan_show_results and _main_page == "시뮬레이션":
     with st.expander("📌 이 시뮬 숫자가 어디서 오나요? (쉬운 설명)", expanded=False):
         _render_simulation_inputs_layperson_guide()
     _render_process_flow_section_header()
-    _render_process_flow_pipeline_html(
+    _render_process_flow_chart(
         trucks_per_day=trucks_per_day,
         payload_ton=payload_ton,
         flake_ratio=flake_ratio,
         furnace_count=furnace_count,
         bottleneck=None,
-        show_tooltips=True,
     )
 
     # ===== KPI 카드 (4열×3행, 10개 지표) =====
@@ -2556,6 +2546,9 @@ if _gunsan_show_results and _main_page == "시뮬레이션":
             _label, _value, _help = _kpi_specs[_idx]
             with _kcols[_j]:
                 st.metric(_label, _value, help=_help)
+
+    # ===== 입출 물량 균형(WIP) 분석 =====
+    _render_balance_analysis(summary)
 
     st.header("📌 시뮬레이션 분석 결과 인사이트")
     st.caption(
@@ -2778,14 +2771,13 @@ if _gunsan_show_results and _main_page == "시뮬레이션":
         """)
     st.error(f"식별된 병목: {analysis.bottleneck} — {analysis.bottleneck_reason}")
     st.caption(
-        "아래 HTML 공정 파이프라인 카드에서 병목 단계가 강조됩니다. "
-        "페이지 상단 「세부공정 프로세스」 차트는 흐름만 보여 주며 병목 색은 적용되지 않습니다."
+        "상단 「세부공정 프로세스」는 흐름만 표시합니다. "
+        "아래 Graphviz 도표는 식별된 병목 자원에 해당하는 공정 노드를 붉게 강조합니다."
     )
-    _render_process_flow_pipeline_html(
+    _render_process_flow_chart(
         trucks_per_day=trucks_per_day,
         payload_ton=payload_ton,
         flake_ratio=flake_ratio,
         furnace_count=furnace_count,
         bottleneck=analysis.bottleneck,
-        show_tooltips=True,
     )

@@ -59,22 +59,59 @@ def inbound_arrivals_for_day(
 
 
 def next_outbound_arrival_min(env_now: float, rng: random.Random, oc: OutboundConfig) -> float:
-    """출하 빈 트럭 다음 도착 시각(분). 지수 간격에 가깝게 전진한 뒤, 오전·오후 창으로 샘플링한다."""
-    t0 = max(float(env_now), float(oc.outbound_start_min))
+    """출하 빈 트럭 다음 도착 시각(분).
+
+    비균질 포아송 과정으로 모델링한다:
+
+    * 도착은 매일 오전(08~12) / 오후(12~18) 두 시간창 안에서만 발생한다.
+    * 두 창의 분당 도착률은 ``morning_dispatch_fraction`` 비중에 맞춰 분배해,
+      시간창 전체의 일별 평균 도착 대수가
+      ``(오전 길이 + 오후 길이) / empty_truck_interval_min`` 가 되도록 한다.
+      예) 간격 60분·시간창 600분 → 일별 평균 10대 (오전 8 + 오후 2).
+    * 현재 시각이 시간창 밖이거나 그날 두 창에서 표본이 모두 창 밖으로
+      벗어나면 다음 날 오전 창 시작 시각으로 점프해 다시 표본을 뽑는다.
+    """
+    morning_start = float(oc.outbound_morning_start_min)
+    morning_end = float(oc.outbound_morning_end_min)
+    afternoon_start = float(oc.outbound_afternoon_start_min)
+    afternoon_end = float(oc.outbound_arrival_window_end_min)
+    morning_span = max(morning_end - morning_start, 0.0)
+    afternoon_span = max(afternoon_end - afternoon_start, 0.0)
+    full_span = morning_span + afternoon_span
+
     mean = max(float(oc.empty_truck_interval_min), 1e-6)
-    min_forward = t0 + rng.expovariate(1.0 / mean)
-    day_floor = int(t0 // 1440) * 1440.0
-    for day_off in range(0, 800):
-        day = day_floor + day_off * 1440.0
-        use_morning = rng.random() < float(oc.morning_dispatch_fraction)
-        if use_morning:
-            lo, hi = float(oc.outbound_morning_start_min), float(oc.outbound_morning_end_min)
-        else:
-            lo, hi = float(oc.outbound_afternoon_start_min), float(oc.outbound_arrival_window_end_min)
-        cand = day + rng.uniform(lo, hi)
-        if cand >= min_forward and cand > env_now:
-            return cand
-    return t0 + mean
+    if full_span <= 0.0:
+        return float(env_now) + mean
+
+    morning_fraction = min(max(float(oc.morning_dispatch_fraction), 0.0), 1.0)
+    afternoon_fraction = 1.0 - morning_fraction
+    daily_expected = full_span / mean
+    morning_rate = (
+        (daily_expected * morning_fraction) / morning_span if morning_span > 0 else 0.0
+    )
+    afternoon_rate = (
+        (daily_expected * afternoon_fraction) / afternoon_span
+        if afternoon_span > 0
+        else 0.0
+    )
+
+    t = float(env_now)
+    for _ in range(800):
+        day_floor = int(t // 1440) * 1440.0
+        windows = (
+            (day_floor + morning_start, day_floor + morning_end, morning_rate),
+            (day_floor + afternoon_start, day_floor + afternoon_end, afternoon_rate),
+        )
+        for lo, hi, rate in windows:
+            if rate <= 0.0 or hi <= t:
+                continue
+            t_start = max(t, lo)
+            cand = t_start + rng.expovariate(rate)
+            if cand < hi:
+                return cand
+        t = day_floor + 1440.0 + morning_start
+
+    return t
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +236,8 @@ class GunsanFactory:
             yield self.env.timeout(ic.unloading_min)
             dump = TruckDump(truck_id=truck_id, payload_ton=ic.payload_ton)
             yield self.sort_queue.put(dump)
+            # 입고 톤수 누적: 하역이 끝나 더미가 공정 안으로 들어간 시점 기준
+            self.m.inbound_ton += ic.payload_ton
         self.m.log(self.env.now, "inbound", "unloaded", truck=truck_id)
 
         # 2차 계근(영점)
@@ -449,12 +488,24 @@ class GunsanFactory:
 def run_simulation(
     cfg: SimulationConfig,
     progress: Callable[[str], None] | None = None,
+    on_tick: Callable[[float, float, Metrics], None] | None = None,
+    tick_steps: int = 100,
 ) -> Metrics:
     """주어진 설정으로 시뮬레이션을 실행하고 Metrics 객체를 반환한다.
 
     progress:
         호출될 때마다 한 줄 안내 문자열을 넘긴다. CLI·웹에서 실행 과정을
         사용자에게 보여 줄 때 사용한다. None 이면 호출하지 않는다.
+    on_tick:
+        ``(fraction, sim_time_min, metrics)`` 형태로 주기적으로 호출되어
+        프로그래스 바(웹 ``st.progress``·CLI 한 줄 갱신 등)를 갱신할 수 있게 한다.
+        ``fraction`` 은 0.0~1.0, ``sim_time_min`` 은 현재 가상 시각(분),
+        ``metrics`` 는 누적 카운터를 그대로 노출한 객체다. ``None`` 이면
+        기존처럼 ``env.run(until=horizon)`` 을 한 번에 돌린다.
+    tick_steps:
+        ``on_tick`` 이 주어진 경우 ``horizon`` 을 몇 단계로 쪼개 진행률을
+        보고할지 결정한다. 큰 값일수록 갱신은 자주, 단계 사이 오버헤드는
+        조금 늘어난다. 기본 100단계(1%) 정도면 화면 갱신이 매끄럽다.
     """
 
     def _p(msg: str) -> None:
@@ -470,6 +521,9 @@ def run_simulation(
     rng = random.Random(cfg.random_seed)
     env = simpy.Environment()
     metrics = Metrics()
+    # 입출고 단위 톤수(만재 기준)는 cfg 에서 복사해 두어 KPI 계산에서 사용한다.
+    metrics.inbound_payload_ton = cfg.inbound.payload_ton
+    metrics.outbound_truck_capacity_ton = cfg.outbound.truck_capacity_ton
     factory = GunsanFactory(env, cfg, metrics, rng)
     _p("② SimPy 환경·공장(자원·큐·버퍼) 객체를 초기화했습니다.")
 
@@ -492,7 +546,46 @@ def run_simulation(
         "④ env.run() — 0분부터 종료 시각까지 이산사건(트럭·파레트·배치·출하 등)을 "
         "시간순으로 처리합니다…"
     )
-    env.run(until=horizon)
+    if on_tick is None:
+        env.run(until=horizon)
+    else:
+        # 진행률을 ``tick_steps`` 단계로 나누어 보고한다. 각 단계 사이에
+        # ``env.run(until=t)`` 를 호출해 가상 시각을 ``t`` 까지 전진시키고,
+        # 매 단계 끝에서 누적 카운터를 그대로 넘겨 외부에서 화면을 그릴 수
+        # 있도록 한다.
+        steps = max(1, int(tick_steps))
+        try:
+            on_tick(0.0, 0.0, metrics)
+        except Exception:
+            # 진행률 콜백에서 예외가 나도 시뮬 본진은 계속 돌아가야 한다.
+            pass
+        for i in range(1, steps + 1):
+            t_next = horizon * i / steps
+            env.run(until=t_next)
+            try:
+                on_tick(i / steps, float(env.now), metrics)
+            except Exception:
+                pass
+
+    # 시뮬 종료 시점의 공정 중 잔량(WIP) 톤수를 metrics 에 기록.
+    # - sort_queue: 하역 직후 더미 (트럭 1대 = pile_size_ton)
+    # - press_queue: 선별 후 sub-pile (sub_pile_ton)
+    # - pallet_buffer: 압착·적재 완료 파레트 (pallet_ton)
+    # - 진행 중 배치: 시작했으나 미완료인 배치 (batch_ton). 엘리베이터/용해/주조
+    #   중간 단계의 잔량을 단순화해서 한 덩어리로 잡는다.
+    # - flake/scr_buffer: 완제품 야적장 잔량 (단위 톤수 × 잔여 단위 수)
+    ic = cfg.inbound
+    sc = cfg.sorting
+    mc = cfg.melting
+    cc = cfg.casting
+    metrics.wip_sort_queue_ton = len(factory.sort_queue.items) * ic.pile_size_ton
+    metrics.wip_press_queue_ton = len(factory.press_queue.items) * sc.sub_pile_ton
+    metrics.wip_pallet_buffer_ton = len(factory.pallet_buffer.items) * sc.pallet_ton
+    in_progress_batches = max(metrics.batches_started - metrics.batches_completed, 0)
+    metrics.wip_melting_in_progress_ton = in_progress_batches * mc.batch_ton
+    metrics.wip_flake_buffer_ton = len(factory.flake_buffer.items) * cc.flake_unit_ton
+    metrics.wip_scr_buffer_ton = len(factory.scr_buffer.items) * cc.scr_unit_ton
+
     _p(
         f"⑤ 엔진 종료: 사건 로그 {len(metrics.events)}건 · "
         f"용해 완료 배치 {metrics.batches_completed}건 · "

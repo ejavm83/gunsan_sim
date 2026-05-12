@@ -103,10 +103,43 @@ def main() -> None:
         f"(가상 시간 horizon = {cfg.sim_horizon_min} min)."
     )
     print("[INFO] SimPy 엔진 단계(아래 순서대로 진행됩니다):")
+
+    # 콘솔 프로그래스 바 — \r 로 같은 줄을 덮어쓴다. tty 가 아닐 때는
+    # 한 줄 갱신이 보이지 않을 수 있어 1%만 끊어 출력한다.
+    horizon_min = float(cfg.sim_horizon_min)
+    bar_width = 30
+    _last_pct: dict[str, int] = {"v": -1}
+    use_cr = sys.stdout.isatty()
+
+    def _print_progress(fraction: float, sim_time_min: float, m) -> None:
+        pct = max(0, min(100, int(round(fraction * 100))))
+        if pct == _last_pct["v"] and pct < 100:
+            return
+        _last_pct["v"] = pct
+        filled = int(round(bar_width * fraction))
+        bar = "█" * filled + "░" * (bar_width - filled)
+        day = int(sim_time_min // 1440) + 1
+        hh = int((sim_time_min % 1440) // 60)
+        line = (
+            f"       진행 [{bar}] {pct:3d}% · "
+            f"가상 {day}일차 {hh:02d}h "
+            f"({sim_time_min / 60:5.1f}/{horizon_min / 60:.0f}h) · "
+            f"입고 {m.truck_in_done}대 · 배치 {m.batches_completed}/{m.batches_started} · "
+            f"출하 {m.truck_out_done}대"
+        )
+        end = "" if use_cr else "\n"
+        prefix = "\r" if use_cr else ""
+        print(f"{prefix}{line}", end=end, flush=True)
+
     metrics = run_simulation(
         cfg,
         progress=lambda msg: print(f"       · {msg}"),
+        on_tick=_print_progress,
+        tick_steps=100,
     )
+    if use_cr:
+        # 마지막 진행 줄을 정상적으로 한 번 개행하여 다음 출력과 겹치지 않게 한다.
+        print()
 
     summary = metrics.summary(cfg.sim_horizon_min)
     print(format_summary(summary))

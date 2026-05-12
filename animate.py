@@ -30,7 +30,7 @@ from matplotlib.patches import FancyBboxPatch, Rectangle  # noqa: E402
 from config import SimulationConfig  # noqa: E402
 from metrics import Event, Metrics  # noqa: E402
 
-_BUILD_INFO_TEXT = "개발자: (주) 지엠티 김길용 수석 | v0.0.3 (2026.05.12)"
+_BUILD_INFO_TEXT = "개발자: (주) 지엠티 김길용 수석 | v0.0.3 (2026.05.13)"
 
 
 # ---------------------------------------------------------------------------

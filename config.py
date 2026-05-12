@@ -130,7 +130,9 @@ class OutboundConfig:
     loading_min_per_ton: float = 0.6  # 20 t 상차 약 12분 전후
 
     # 빈 트럭 도착 간격: 평균값(분); 오전(8~12시) 출하 비중 약 80%
-    empty_truck_interval_min: float = 90.0
+    # 입고(10대/일 × 20t = 200t/일)와 출하 톤수가 균형을 이루도록 60분으로 잡았다.
+    # (시간창 600분 / 60분 = 일별 평균 10대 → 200t/일)
+    empty_truck_interval_min: float = 60.0
     outbound_start_min: int = 8 * 60  # 오전 8시부터 출하 시작
     morning_dispatch_fraction: float = 0.8
     outbound_morning_start_min: int = 8 * 60
