@@ -60,16 +60,6 @@ _SIMPY_CPSAT_MD = _REPO_ROOT / "docs" / "simpy_cpsat_overview.md"
 _TERMS_GLOSSARY_MD = _REPO_ROOT / "docs" / "terms_glossary.md"
 _SIM_INPUTS_CONSTRAINTS_MD = _REPO_ROOT / "docs" / "simulation_inputs_constraints.md"
 
-# 상단 한 줄 내비(실행·결과 + 문서). 예전 세션의 "시뮬레이션" 값은 실행·결과로 치환한다.
-_MAIN_NAV_HOME = "실행·결과"
-_MAIN_NAV_OPTIONS: tuple[str, ...] = (
-    _MAIN_NAV_HOME,
-    "📚 용어 및 약어",
-    "🏭 공정 상세",
-    "🔬 방법론 및 라이브러리",
-    "📌 입력과 규칙 (쉬운 설명)",
-)
-
 # Plotly 호버 박스: 흰 plot 배경과 구분되도록 어두운 패널 + 밝은 테두리
 _PLOTLY_HOVERLABEL = dict(
     bgcolor="rgb(15,23,42)",
@@ -312,7 +302,7 @@ section[data-testid="stMain"] [data-testid="stMarkdownContainer"] h2 {
 section[data-testid="stMain"] [data-testid="stMarkdownContainer"] h3 {
   color: rgb(241, 245, 249) !important;
   line-height: 1.38 !important;
-  margin-top: 0.52rem !important;
+  margin-top: 1rem !important;
   margin-bottom: 0.38rem !important;
 }
 section[data-testid="stMain"] [data-testid="stMarkdownContainer"] ol,
@@ -1067,59 +1057,9 @@ def _render_simulation_inputs_layperson_guide() -> None:
             st.write("파일이 비어 있거나 읽을 수 없습니다.")
 
 
-def _render_layperson_plotly_figures(
-    metrics: Metrics,
-    cfg: SimulationConfig,
-    analysis: Analysis,
-    *,
-    chart_key_prefix: str = "gunsan_layperson",
-) -> None:
-    """일반인용 Plotly 6종(가동률·버퍼·트럭·체류·일별·간트)을 동일 레이아웃으로 렌더."""
-    _lp_figs = build_layperson_visual_figures(metrics, cfg, analysis)
-    _lp_r1a, _lp_r1b = st.columns(2)
-    with _lp_r1a:
-        st.plotly_chart(
-            _style_layperson_result_figure(_lp_figs["utilization"]),
-            use_container_width=True,
-            key=f"{chart_key_prefix}_util",
-        )
-    with _lp_r1b:
-        st.plotly_chart(
-            _style_layperson_result_figure(_lp_figs["buffers"]),
-            use_container_width=True,
-            key=f"{chart_key_prefix}_buffer",
-        )
-    _lp_r2a, _lp_r2b = st.columns(2)
-    with _lp_r2a:
-        st.plotly_chart(
-            _style_layperson_result_figure(_lp_figs["trucks"]),
-            use_container_width=True,
-            key=f"{chart_key_prefix}_trucks",
-        )
-    with _lp_r2b:
-        st.plotly_chart(
-            _style_layperson_result_figure(_lp_figs["lead_times"]),
-            use_container_width=True,
-            key=f"{chart_key_prefix}_lead",
-        )
-    _lp_r3a, _lp_r3b = st.columns(2)
-    with _lp_r3a:
-        st.plotly_chart(
-            _style_layperson_result_figure(_lp_figs["daily_output"]),
-            use_container_width=True,
-            key=f"{chart_key_prefix}_daily",
-        )
-    with _lp_r3b:
-        st.plotly_chart(
-            _style_layperson_result_figure(_lp_figs["furnace_gantt"]),
-            use_container_width=True,
-            key=f"{chart_key_prefix}_gantt",
-        )
-
-
 def _render_glossary_page() -> None:
     """웹 대시보드 용어·약어 페이지(파일 기반 + 편집)."""
-    st.subheader("📚 용어약어")
+    st.subheader("📚 용어 및 약어")
     st.caption(
         f"원본 파일: `{_TERMS_GLOSSARY_MD.relative_to(_REPO_ROOT)}`. "
         "저장하면 같은 서버를 보는 다른 사용자도 즉시 같은 내용을 확인할 수 있습니다."
@@ -1155,216 +1095,253 @@ def _render_glossary_page() -> None:
             st.rerun()
 
 
-def _render_doc_process_detail() -> None:
-    """실행 전·문서 내비: 공정 상세."""
-    st.markdown("## 군산 공장 하이브리드 공정 상세")
-    st.markdown(
-        "스크랩 구리 입고부터 완제품 출하까지 **5단계** 공정의 상세 설명입니다. "
-        "각 단계는 **소제목 → 요약 불릿** 순으로 읽기 쉽게 정리되어 있습니다."
+def _render_simulation_prerun_tabs(
+    *,
+    trucks_per_day: int,
+    payload_ton: float,
+    flake_ratio: int,
+    furnace_count: int,
+) -> None:
+    """실행 전: 개요·공정·방법론·입력 안내 탭."""
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["📋 시뮬레이션 개요", "🏭 공정 상세", "🔬 방법론 및 라이브러리", "📌 입력과 규칙 (쉬운 설명)"]
     )
-    process_md = _read_markdown_file(_PROCESS_DETAIL_MD)
-    if process_md:
-        st.markdown(process_md)
-    else:
-        st.warning("공정 상세 파일이 비어 있습니다. 아래 편집기에서 내용을 작성해 저장해 주세요.")
 
-    with st.expander("✍️ 공정 상세 편집", expanded=False):
-        edited_process_md = st.text_area(
-            "공정 상세 Markdown",
-            value=process_md,
-            height=620,
-            key="process_detail_editor",
+    with tab1:
+        st.info("👈 왼쪽 사이드바에서 파라미터를 설정하고 시뮬레이션 실행 버튼을 누르세요.")
+        with st.expander("📌 이 시뮬 숫자가 어디서 오나요? (쉬운 설명)", expanded=False):
+            _render_simulation_inputs_layperson_guide()
+        _render_process_flow_section_header()
+        _render_process_flow_pipeline_html(
+            trucks_per_day=trucks_per_day,
+            payload_ton=payload_ton,
+            flake_ratio=flake_ratio,
+            furnace_count=furnace_count,
+            bottleneck=None,
+            show_tooltips=True,
         )
-        if st.button("💾 공정 상세 저장", type="primary", key="save_process_detail"):
-            _save_markdown_file(_PROCESS_DETAIL_MD, edited_process_md)
-            st.success("공정 상세를 저장했습니다. 다른 사용자도 새로고침 후 동일 내용을 확인할 수 있습니다.")
-            st.rerun()
-
-
-def _render_doc_methodology() -> None:
-    """실행 전·문서 내비: 방법론 및 라이브러리."""
-    st.markdown("## 시뮬레이션 방법론 및 사용 라이브러리")
-    st.markdown("""
-    본 시뮬레이션은 학술적으로 검증된 방법론과 산업 표준 라이브러리를 활용하여
-    결과의 신뢰성과 재현성을 보장합니다.
-    """)
-
-    _render_simpy_cpsat_overview_for_dashboard()
-
-    # SimPy 설명
-    st.markdown("---")
-    st.markdown("### 1. SimPy - 이산사건 시뮬레이션 (Discrete Event Simulation)")
-
-    col_simpy1, col_simpy2 = st.columns([2, 1])
-    with col_simpy1:
         st.markdown("""
-        SimPy는 Python 기반 이산사건 시뮬레이션(DES) 프레임워크로,
-        2002년 최초 출시 이후 20년 이상 학술 및 산업 분야에서 검증되었습니다.
+        ### 시뮬레이션 개요
 
-        #### 학술적/산업적 신뢰성
-        - Google Scholar: 수천 편의 학술 논문에서 인용
-        - 적용 분야: 제조업 공정, 물류/공급망, 의료 시스템, 통신 네트워크
-        - 글로벌 기업: Boeing, Toyota, DHL 등의 시뮬레이션 프로젝트에 활용
+        | 단계 | 내용 |
+        |------|------|
+        | 1. 입고/하역 | 09~18시 도착(오전 80%) → 1차 계근 → 하역(20분) → 2차 계근 → 출차 |
+        | 2. 선별/압착 | 30분 정리 → 0.5t 블록당 약 9.5분(지게차+압착+적재) 압착 → 파레트(2.5t) |
+        | 3. 장입/용해 | 32 파레트(80t) → 엘리베이터(5분/왕복) → 2h 준비 → 병목 약 13h |
+        | 4. 주조 | 큐플레이크(1t/3.1분) + SCR(4t/12.5분) 병렬, 기본 2:8 |
+        | 5. 출하 | 완제품 야적 → 빈 트럭(오전 80% 편향) → 상차(20t) → 2차 계근 → 출차 |
 
-        #### 이산사건 시뮬레이션(DES)이란?
-        연속 시간을 모사하지 않고 이벤트 발생 시점만 처리하여 계산 효율을 극대화하는 방법론입니다.
-        제조업 공정 시뮬레이션의 국제 표준 방법론으로 인정받고 있습니다.
+        ### 기본값 기준 예상 결과
+        - 일평균 입고: 200t (10대 × 20t)
+        - 용해·정련 병목이 지배적이면 일평균 처리량은 설계·버퍼에 따라 달라짐(대략 80t/배치 전후)
+        - 압착기가 병목이면 파레트 생성이 지연되어 처리량 감소
         """)
-    with col_simpy2:
+
+    with tab2:
+        st.markdown("## 군산 공장 하이브리드 공정 상세")
+        st.markdown(
+            "스크랩 구리 입고부터 완제품 출하까지 **5단계** 공정의 상세 설명입니다. "
+            "각 단계는 **소제목 → 요약 불릿** 순으로 읽기 쉽게 정리되어 있습니다."
+        )
+        process_md = _read_markdown_file(_PROCESS_DETAIL_MD)
+        if process_md:
+            st.markdown(process_md)
+        else:
+            st.warning("공정 상세 파일이 비어 있습니다. 아래 편집기에서 내용을 작성해 저장해 주세요.")
+
+        with st.expander("✍️ 공정 상세 편집", expanded=False):
+            edited_process_md = st.text_area(
+                "공정 상세 Markdown",
+                value=process_md,
+                height=620,
+                key="process_detail_editor",
+            )
+            if st.button("💾 공정 상세 저장", type="primary", key="save_process_detail"):
+                _save_markdown_file(_PROCESS_DETAIL_MD, edited_process_md)
+                st.success("공정 상세를 저장했습니다. 다른 사용자도 새로고침 후 동일 내용을 확인할 수 있습니다.")
+                st.rerun()
+
+    with tab3:
+        st.markdown("## 시뮬레이션 방법론 및 사용 라이브러리")
         st.markdown("""
+        본 시뮬레이션은 학술적으로 검증된 방법론과 산업 표준 라이브러리를 활용하여
+        결과의 신뢰성과 재현성을 보장합니다.
+        """)
+
+        _render_simpy_cpsat_overview_for_dashboard()
+
+        # SimPy 설명
+        st.markdown("---")
+        st.markdown("### 1. SimPy - 이산사건 시뮬레이션 (Discrete Event Simulation)")
+
+        col_simpy1, col_simpy2 = st.columns([2, 1])
+        with col_simpy1:
+            st.markdown("""
+            SimPy는 Python 기반 이산사건 시뮬레이션(DES) 프레임워크로,
+            2002년 최초 출시 이후 20년 이상 학술 및 산업 분야에서 검증되었습니다.
+
+            #### 학술적/산업적 신뢰성
+            - Google Scholar: 수천 편의 학술 논문에서 인용
+            - 적용 분야: 제조업 공정, 물류/공급망, 의료 시스템, 통신 네트워크
+            - 글로벌 기업: Boeing, Toyota, DHL 등의 시뮬레이션 프로젝트에 활용
+
+            #### 이산사건 시뮬레이션(DES)이란?
+            연속 시간을 모사하지 않고 이벤트 발생 시점만 처리하여 계산 효율을 극대화하는 방법론입니다.
+            제조업 공정 시뮬레이션의 국제 표준 방법론으로 인정받고 있습니다.
+            """)
+        with col_simpy2:
+            st.markdown("""
+            | 항목 | 내용 |
+            |------|------|
+            | 라이선스 | MIT (오픈소스) |
+            | 버전 | 4.1+ |
+            | 최초 출시 | 2002년 |
+            | 유지보수 | 활발 (지속 업데이트) |
+            """)
+
+        with st.expander("💡 본 프로젝트에서 SimPy 활용 상세"):
+            st.markdown("""
+            ```python
+            # 자원 경쟁 모델링 - 대기열 및 선착순 처리 자동 관리
+            self.weighbridge = simpy.Resource(env, capacity=1)   # 계근대 1개
+            self.furnaces = simpy.Resource(env, capacity=2)       # 반사로 2개
+
+            # 버퍼 관리 - 용량 초과 시 생산 라인 자동 정지
+            self.pallet_buffer = simpy.Store(env, capacity=160)   # 파레트 버퍼
+
+            # 병렬 프로세스 - 큐프레이크/SCR 동시 주조
+            yield self.env.all_of([flake_proc, scr_proc])
+            ```
+
+            모델링된 자원:
+            - 계근대(1개), 하역장(2개), 압착기(1개), 반사로(2개), 엘리베이터(1개)
+            - 파레트 버퍼(160개), 큐프레이크 야적(100포대), SCR 코일 야적(75코일)
+            """)
+
+        # CP-SAT 설명
+        st.markdown("---")
+        st.markdown("### 2. Google OR-Tools CP-SAT - 제약 만족 프로그래밍 최적화")
+
+        col_cpsat1, col_cpsat2 = st.columns([2, 1])
+        with col_cpsat1:
+            st.markdown("""
+            CP-SAT (Constraint Programming - SAT Solver)는 Google Research의
+            Operations Research Team이 개발한 최적화 솔버입니다.
+
+            #### 학술적/산업적 신뢰성
+            - MiniZinc Challenge: 국제 제약 프로그래밍 경진대회에서 지속적 상위권 기록
+            - Google 내부 활용: 자원 배분, 직원 스케줄링, 광고 최적화에 실전 적용
+            - 학술 검증: 수천 편의 논문에서 벤치마크 솔버로 활용
+
+            #### 핵심 특징
+            - 최적성 증명: 최적해 발견 시 "더 나은 해가 없음"을 수학적으로 증명
+            - 작업 스케줄링 특화: `IntervalVar`, `NoOverlap` 등 스케줄링 전용 기능 제공
+            """)
+        with col_cpsat2:
+            st.markdown("""
+            | 항목 | 내용 |
+            |------|------|
+            | 개발사 | Google Research |
+            | 라이선스 | Apache 2.0 (오픈소스) |
+            | 버전 | 9.10+ |
+            | 솔버 유형 | SAT + CP 하이브리드 |
+            """)
+
+        with st.expander("💡 본 프로젝트에서 CP-SAT 활용 상세"):
+            st.markdown("""
+            반사로 배치 스케줄 최적화 문제:
+
+            ```python
+            # 변수 정의
+            start = model.NewIntVar(release_min, horizon_min, f"start_{batch_id}")
+
+            # 제약 조건: 같은 반사로 내 작업 중첩 금지
+            model.AddNoOverlap(intervals_per_furnace[f])
+
+            # 목적 함수: 메이크스팬 최소화
+            model.Minimize(makespan)
+            ```
+
+            최적화 문제 구조:
+            - 변수: 배치 시작 시각, 반사로 배정 (1 또는 2)
+            - 제약: 파레트 32개 준비 후 시작, 동일 반사로 작업 비중첩
+            - 목적: 전체 완료 시간(Makespan) 최소화
+
+            결과 해석:
+            - `OPTIMAL` 상태 시: 해당 메이크스팬이 이론적 최선임을 보장
+            - `FEASIBLE` 상태 시: 실행 가능한 해이나 최적성 미증명
+            """)
+
+        # Matplotlib 설명
+        st.markdown("---")
+        st.markdown("### 3. Matplotlib - 시각화 및 애니메이션")
+
+        st.markdown("""
+        Matplotlib은 Python 시각화의 사실상 표준(de facto standard)으로,
+        과학/공학 분야에서 가장 널리 사용되는 플로팅 라이브러리입니다.
+
         | 항목 | 내용 |
         |------|------|
-        | 라이선스 | MIT (오픈소스) |
-        | 버전 | 4.1+ |
-        | 최초 출시 | 2002년 |
-        | 유지보수 | 활발 (지속 업데이트) |
+        | 라이선스 | PSF License (Python Software Foundation) |
+        | 버전 | 3.8+ |
+        | 활용 | 공장 레이아웃 애니메이션, 버퍼 시계열 그래프, GIF/MP4 출력 |
         """)
 
-    with st.expander("💡 본 프로젝트에서 SimPy 활용 상세"):
+        # Plotly / Streamlit 설명
+        st.markdown("---")
+        st.markdown("### 4. Plotly & Streamlit - 인터랙티브 대시보드")
+
+        col_ui1, col_ui2 = st.columns(2)
+        with col_ui1:
+            st.markdown("""
+            Plotly
+            - 인터랙티브 차트 라이브러리
+            - 줌, 팬, 호버 등 동적 기능 지원
+            - 버퍼 시계열, Gantt 차트, 히스토그램 렌더링
+            """)
+        with col_ui2:
+            st.markdown("""
+            Streamlit
+            - Python 기반 웹 앱 프레임워크
+            - 데이터 과학/ML 대시보드에 최적화
+            - 실시간 파라미터 조정 및 즉시 결과 확인
+            """)
+
+        # 방법론 요약
+        st.markdown("---")
+        st.markdown("### 📊 시뮬레이션 결과 신뢰성 요약")
+
         st.markdown("""
-        ```python
-        # 자원 경쟁 모델링 - 대기열 및 선착순 처리 자동 관리
-        self.weighbridge = simpy.Resource(env, capacity=1)   # 계근대 1개
-        self.furnaces = simpy.Resource(env, capacity=2)       # 반사로 2개
-
-        # 버퍼 관리 - 용량 초과 시 생산 라인 자동 정지
-        self.pallet_buffer = simpy.Store(env, capacity=160)   # 파레트 버퍼
-
-        # 병렬 프로세스 - 큐프레이크/SCR 동시 주조
-        yield self.env.all_of([flake_proc, scr_proc])
-        ```
-
-        모델링된 자원:
-        - 계근대(1개), 하역장(2개), 압착기(1개), 반사로(2개), 엘리베이터(1개)
-        - 파레트 버퍼(160개), 큐프레이크 야적(100포대), SCR 코일 야적(75코일)
+        | 구분 | 방법론 | 신뢰성 근거 |
+        |------|--------|-------------|
+        | 공정 시뮬레이션 | 이산사건 시뮬레이션 (DES) | 제조업 국제 표준, 20년+ 검증된 SimPy |
+        | 스케줄 최적화 | 제약 만족 프로그래밍 (CP-SAT) | Google 개발, 국제 대회 검증, 최적성 수학적 증명 |
+        | 불확실성 반영 | 지수분포 기반 확률 모델 | 도착 과정의 표준 확률 모델 (출하 트럭) |
+        | 재현성 | 랜덤 시드 고정 | 동일 시드로 동일 결과 보장 |
         """)
 
-    # CP-SAT 설명
-    st.markdown("---")
-    st.markdown("### 2. Google OR-Tools CP-SAT - 제약 만족 프로그래밍 최적화")
+        with st.expander("⚠️ 결과 해석 시 주의사항"):
+            st.markdown("""
+            1. 확정적 가정: 작업 시간(용해·정련 병목 약 13시간, 압착 90초 등)은 고정값으로 모델링
+               - 실제 변동성 반영 필요 시 확률 분포 적용 가능
 
-    col_cpsat1, col_cpsat2 = st.columns([2, 1])
-    with col_cpsat1:
-        st.markdown("""
-        CP-SAT (Constraint Programming - SAT Solver)는 Google Research의
-        Operations Research Team이 개발한 최적화 솔버입니다.
+            2. 단순화된 설비 모델: 설비 고장, 유지보수 일정 미반영
+               - 추후 확장 가능
 
-        #### 학술적/산업적 신뢰성
-        - MiniZinc Challenge: 국제 제약 프로그래밍 경진대회에서 지속적 상위권 기록
-        - Google 내부 활용: 자원 배분, 직원 스케줄링, 광고 최적화에 실전 적용
-        - 학술 검증: 수천 편의 논문에서 벤치마크 솔버로 활용
+            3. 시드 기반 재현성: `random_seed` 고정으로 재현성 확보
+               - 다른 시드로 반복 실험하여 통계적 신뢰구간 산출 권장
 
-        #### 핵심 특징
-        - 최적성 증명: 최적해 발견 시 "더 나은 해가 없음"을 수학적으로 증명
-        - 작업 스케줄링 특화: `IntervalVar`, `NoOverlap` 등 스케줄링 전용 기능 제공
-        """)
-    with col_cpsat2:
-        st.markdown("""
-        | 항목 | 내용 |
-        |------|------|
-        | 개발사 | Google Research |
-        | 라이선스 | Apache 2.0 (오픈소스) |
-        | 버전 | 9.10+ |
-        | 솔버 유형 | SAT + CP 하이브리드 |
-        """)
+            4. 입력 데이터 의존성: 파라미터 값의 정확도가 결과 품질에 직접 영향
+               - 현장 데이터 기반 파라미터 검증 필요
+            """)
 
-    with st.expander("💡 본 프로젝트에서 CP-SAT 활용 상세"):
-        st.markdown("""
-        반사로 배치 스케줄 최적화 문제:
-
-        ```python
-        # 변수 정의
-        start = model.NewIntVar(release_min, horizon_min, f"start_{batch_id}")
-
-        # 제약 조건: 같은 반사로 내 작업 중첩 금지
-        model.AddNoOverlap(intervals_per_furnace[f])
-
-        # 목적 함수: 메이크스팬 최소화
-        model.Minimize(makespan)
-        ```
-
-        최적화 문제 구조:
-        - 변수: 배치 시작 시각, 반사로 배정 (1 또는 2)
-        - 제약: 파레트 32개 준비 후 시작, 동일 반사로 작업 비중첩
-        - 목적: 전체 완료 시간(Makespan) 최소화
-
-        결과 해석:
-        - `OPTIMAL` 상태 시: 해당 메이크스팬이 이론적 최선임을 보장
-        - `FEASIBLE` 상태 시: 실행 가능한 해이나 최적성 미증명
-        """)
-
-    # Matplotlib 설명
-    st.markdown("---")
-    st.markdown("### 3. Matplotlib - 시각화 및 애니메이션")
-
-    st.markdown("""
-    Matplotlib은 Python 시각화의 사실상 표준(de facto standard)으로,
-    과학/공학 분야에서 가장 널리 사용되는 플로팅 라이브러리입니다.
-
-    | 항목 | 내용 |
-    |------|------|
-    | 라이선스 | PSF License (Python Software Foundation) |
-    | 버전 | 3.8+ |
-    | 활용 | 공장 레이아웃 애니메이션, 버퍼 시계열 그래프, GIF/MP4 출력 |
-    """)
-
-    # Plotly / Streamlit 설명
-    st.markdown("---")
-    st.markdown("### 4. Plotly & Streamlit - 인터랙티브 대시보드")
-
-    col_ui1, col_ui2 = st.columns(2)
-    with col_ui1:
-        st.markdown("""
-        Plotly
-        - 인터랙티브 차트 라이브러리
-        - 줌, 팬, 호버 등 동적 기능 지원
-        - 버퍼 시계열, Gantt 차트, 히스토그램 렌더링
-        """)
-    with col_ui2:
-        st.markdown("""
-        Streamlit
-        - Python 기반 웹 앱 프레임워크
-        - 데이터 과학/ML 대시보드에 최적화
-        - 실시간 파라미터 조정 및 즉시 결과 확인
-        """)
-
-    # 방법론 요약
-    st.markdown("---")
-    st.markdown("### 📊 시뮬레이션 결과 신뢰성 요약")
-
-    st.markdown("""
-    | 구분 | 방법론 | 신뢰성 근거 |
-    |------|--------|-------------|
-    | 공정 시뮬레이션 | 이산사건 시뮬레이션 (DES) | 제조업 국제 표준, 20년+ 검증된 SimPy |
-    | 스케줄 최적화 | 제약 만족 프로그래밍 (CP-SAT) | Google 개발, 국제 대회 검증, 최적성 수학적 증명 |
-    | 불확실성 반영 | 지수분포 기반 확률 모델 | 도착 과정의 표준 확률 모델 (출하 트럭) |
-    | 재현성 | 랜덤 시드 고정 | 동일 시드로 동일 결과 보장 |
-    """)
-
-    with st.expander("⚠️ 결과 해석 시 주의사항"):
-        st.markdown("""
-        1. 확정적 가정: 작업 시간(용해·정련 병목 약 13시간, 압착 90초 등)은 고정값으로 모델링
-           - 실제 변동성 반영 필요 시 확률 분포 적용 가능
-
-        2. 단순화된 설비 모델: 설비 고장, 유지보수 일정 미반영
-           - 추후 확장 가능
-
-        3. 시드 기반 재현성: `random_seed` 고정으로 재현성 확보
-           - 다른 시드로 반복 실험하여 통계적 신뢰구간 산출 권장
-
-        4. 입력 데이터 의존성: 파라미터 값의 정확도가 결과 품질에 직접 영향
-           - 현장 데이터 기반 파라미터 검증 필요
-        """)
-
-
-def _render_doc_inputs_layperson() -> None:
-    """실행 전·문서 내비: 입력과 규칙(쉬운 설명)."""
-    st.markdown(
-        "아래는 저장소 문서 `docs/simulation_inputs_constraints.md`와 같은 내용을 "
-        "표·전문 용어를 줄여 풀어 쓴 전체 안내입니다. "
-        "요약만 보려면 **실행·결과** 화면의 「이 시뮬 숫자가 어디서 오나요?」 접기 메뉴를 이용하세요."
-    )
-    _render_simulation_inputs_layperson_guide()
+    with tab4:
+        st.markdown(
+            "아래는 저장소 문서 `docs/simulation_inputs_constraints.md`와 같은 내용을 "
+            "표·전문 용어를 줄여 풀어 쓴 전체 안내입니다. "
+            "요약만 보려면 **시뮬레이션 개요** 탭의 접기 메뉴를 이용하세요."
+        )
+        _render_simulation_inputs_layperson_guide()
 
 
 # 접근 제어(로그인 페이지)
@@ -2395,78 +2372,83 @@ with st.container(border=False):
         "계산은 이 앱이 돌아가는 PC(또는 내부에 배포한 Streamlit 서버) 안에서만 이루어지며, "
         "보통 수 초 안에 끝나는 가벼운 수준이라 설정을 바꿔 가며 시험하기에 부담이 적습니다."
     )
-    if run_button:
-        inbound = dataclasses.replace(
-            DEFAULT_CONFIG.inbound,
-            trucks_per_day=trucks_per_day,
-            payload_ton=payload_ton,
-            unloading_bays=unloading_bays,
-        )
-        sorting = dataclasses.replace(
-            DEFAULT_CONFIG.sorting,
-            sorters=sorters,
-            press_machines=press_machines,
-            pallet_buffer_capacity=pallet_buffer_capacity,
-        )
-        melting = dataclasses.replace(
-            DEFAULT_CONFIG.melting,
-            furnace_count=furnace_count,
-            batch_ton=batch_ton,
-            pallets_per_batch=int(batch_ton / DEFAULT_CONFIG.sorting.pallet_ton),
-        )
-        casting = dataclasses.replace(
-            DEFAULT_CONFIG.casting,
-            flake_ratio=flake_ratio / 100.0,
-            scr_ratio=1.0 - flake_ratio / 100.0,
-        )
-        outbound = dataclasses.replace(
-            DEFAULT_CONFIG.outbound,
-            empty_truck_interval_min=float(empty_truck_interval),
-        )
-        cfg = SimulationConfig(
-            sim_days=sim_days,
-            random_seed=int(random_seed),
-            inbound=inbound,
-            sorting=sorting,
-            melting=melting,
-            casting=casting,
-            outbound=outbound,
-        )
-
-        with st.status(
-            f"🔄 {sim_days}일치 시뮬레이션 실행 중",
-            expanded=True,
-        ) as sim_status:
-            sim_status.write(
-                "실제 벽시계는 보통 수 초 이내입니다. 가상 시간은 설정한 일수만큼 "
-                "한 번에 재생됩니다."
+    st.markdown("**페이지**")
+    _main_page = st.radio(
+        "section",
+        ["시뮬레이션", "용어 및 약어"],
+        horizontal=True,
+        key="gunsan_main_page",
+        label_visibility="collapsed",
+    )
+    if _main_page == "용어 및 약어":
+        _render_glossary_page()
+    else:
+        if run_button:
+            inbound = dataclasses.replace(
+                DEFAULT_CONFIG.inbound,
+                trucks_per_day=trucks_per_day,
+                payload_ton=payload_ton,
+                unloading_bays=unloading_bays,
             )
-            t0 = time.perf_counter()
-            metrics = run_simulation(cfg, progress=sim_status.write)
-            elapsed = time.perf_counter() - t0
-            sim_status.update(
-                label=f"✅ 시뮬레이션 완료 (약 {elapsed:.2f}초)",
-                state="complete",
-                expanded=False,
+            sorting = dataclasses.replace(
+                DEFAULT_CONFIG.sorting,
+                sorters=sorters,
+                press_machines=press_machines,
+                pallet_buffer_capacity=pallet_buffer_capacity,
+            )
+            melting = dataclasses.replace(
+                DEFAULT_CONFIG.melting,
+                furnace_count=furnace_count,
+                batch_ton=batch_ton,
+                pallets_per_batch=int(batch_ton / DEFAULT_CONFIG.sorting.pallet_ton),
+            )
+            casting = dataclasses.replace(
+                DEFAULT_CONFIG.casting,
+                flake_ratio=flake_ratio / 100.0,
+                scr_ratio=1.0 - flake_ratio / 100.0,
+            )
+            outbound = dataclasses.replace(
+                DEFAULT_CONFIG.outbound,
+                empty_truck_interval_min=float(empty_truck_interval),
+            )
+            cfg = SimulationConfig(
+                sim_days=sim_days,
+                random_seed=int(random_seed),
+                inbound=inbound,
+                sorting=sorting,
+                melting=melting,
+                casting=casting,
+                outbound=outbound,
             )
 
-        st.success(
-            f"✅ 결과 반영 완료 — **시뮬레이션** 탭에서 KPI·표를, **시각자료** 탭에서 그래프를 확인하세요. "
-            f"(실행 {elapsed:.2f}초)"
-        )
+            with st.status(
+                f"🔄 {sim_days}일치 시뮬레이션 실행 중",
+                expanded=True,
+            ) as sim_status:
+                sim_status.write(
+                    "실제 벽시계는 보통 수 초 이내입니다. 가상 시간은 설정한 일수만큼 "
+                    "한 번에 재생됩니다."
+                )
+                t0 = time.perf_counter()
+                metrics = run_simulation(cfg, progress=sim_status.write)
+                elapsed = time.perf_counter() - t0
+                sim_status.update(
+                    label=f"✅ 시뮬레이션 완료 (약 {elapsed:.2f}초)",
+                    state="complete",
+                    expanded=False,
+                )
 
-        analysis = analyze(metrics, cfg)
-        st.session_state[_GUNSAN_LAST_RUN_BUNDLE_KEY] = {
-            "metrics": metrics,
-            "analysis": analysis,
-            "cfg": cfg,
-        }
+            st.success(f"✅ 결과 반영 완료 — KPI·차트를 아래에서 확인하세요. (실행 {elapsed:.2f}초)")
 
-    _gunsan_bundle = st.session_state.get(_GUNSAN_LAST_RUN_BUNDLE_KEY)
-    _gunsan_show_results = _gunsan_bundle is not None
+            analysis = analyze(metrics, cfg)
+            st.session_state[_GUNSAN_LAST_RUN_BUNDLE_KEY] = {
+                "metrics": metrics,
+                "analysis": analysis,
+                "cfg": cfg,
+            }
 
-    tab_sim, tab_viz, tab_glossary = st.tabs(["시뮬레이션", "시각자료", "용어약어"])
-    with tab_sim:
+        _gunsan_bundle = st.session_state.get(_GUNSAN_LAST_RUN_BUNDLE_KEY)
+        _gunsan_show_results = _gunsan_bundle is not None
         if not _gunsan_show_results:
             _render_simulation_prerun_tabs(
                 trucks_per_day=trucks_per_day,
@@ -2474,312 +2456,336 @@ with st.container(border=False):
                 flake_ratio=flake_ratio,
                 furnace_count=furnace_count,
             )
-        if _gunsan_show_results:
-            metrics = _gunsan_bundle["metrics"]
-            analysis = _gunsan_bundle["analysis"]
-            cfg = _gunsan_bundle["cfg"]
-            sim_days = cfg.sim_days
-            random_seed = cfg.random_seed
-            trucks_per_day = cfg.inbound.trucks_per_day
-            payload_ton = cfg.inbound.payload_ton
-            unloading_bays = cfg.inbound.unloading_bays
-            sorters = cfg.sorting.sorters
-            press_machines = cfg.sorting.press_machines
-            pallet_buffer_capacity = cfg.sorting.pallet_buffer_capacity
-            furnace_count = cfg.melting.furnace_count
-            batch_ton = cfg.melting.batch_ton
-            flake_ratio = int(round(cfg.casting.flake_ratio * 100))
-            empty_truck_interval = int(round(cfg.outbound.empty_truck_interval_min))
-            summary = analysis.summary
 
-            with st.expander("📌 이 시뮬 숫자가 어디서 오나요? (쉬운 설명)", expanded=False):
-                _render_simulation_inputs_layperson_guide()
-            _render_process_flow_section_header()
-            _render_process_flow_pipeline_html(
-                trucks_per_day=trucks_per_day,
-                payload_ton=payload_ton,
-                flake_ratio=flake_ratio,
-                furnace_count=furnace_count,
-                bottleneck=None,
-                show_tooltips=True,
-            )
+if _main_page == "용어 및 약어":
+    st.stop()
 
-            # ===== KPI 카드 (4열×3행, 10개 지표) =====
-            st.header("📊 핵심 지표")
-            _kpi_specs: list[tuple[str, str, str | None]] = [
-                (
-                    "처리 트럭 (입고)",
-                    f"{summary['trucks_in_processed']} 대",
-                    "시뮬레이션 기간 동안 입고 후 출차 완료된 트럭의 총 대수입니다. 1차 계근 → 하역 → 2차 계근 → 출차 과정을 완료한 트럭만 집계됩니다.",
-                ),
-                (
-                    "출하 트럭",
-                    f"{summary['trucks_out_dispatched']} 대",
-                    "완제품을 적재하고 출고된 출하 트럭의 총 대수입니다. 빈 트럭 도착 → 상차 → 계근 → 출고 과정을 완료한 트럭만 집계됩니다.",
-                ),
-                (
-                    "완료 배치",
-                    f"{summary['melt_batches_completed']} 회",
-                    "반사로에서 완료된 용해 배치의 총 횟수입니다. 1배치 = 장입 → 용해·정련 병목(약 13시간) → 주조 완료. 생산 능력의 핵심 지표입니다.",
-                ),
-                (
-                    "총 생산량",
-                    f"{summary['total_product_ton']:.0f} t",
-                    "큐프레이크와 SCR 코일을 합한 총 생산량(톤)입니다. 출하된 제품 + 야적장 재고를 포함합니다.",
-                ),
-                (
-                    "일평균 처리량",
-                    f"{summary['throughput_ton_per_day']:.1f} t/일",
-                    "일평균 생산량 = 총 생산량 ÷ 시뮬레이션 일수. 공장의 실질적인 생산 능력을 나타내는 핵심 KPI입니다.",
-                ),
-                (
-                    "큐프레이크",
-                    f"{summary['flake_ton']:.0f} t",
-                    "생산된 Cu 플레이크의 총 중량(톤)입니다. 25kg 포대 단위로 생산되며, 전해 정련 및 합금 제조에 사용됩니다.",
-                ),
-                (
-                    "SCR 코일",
-                    f"{summary['scr_ton']:.0f} t",
-                    "생산된 SCR(South Wire Rod) 코일의 총 중량(톤)입니다. 4톤/코일 단위로 생산되며, 전선/케이블 제조에 사용됩니다.",
-                ),
-                (
-                    "입고 평균체류",
-                    _format_kpi_minutes(float(summary["avg_truck_in_lead_min"])),
-                    "입고 트럭의 평균 체류시간(도착~출차). 대기시간이 길면 하역장/계근대 병목을 의심해야 합니다. 목표: 60분 이내.",
-                ),
-                (
-                    "출하 평균체류",
-                    _format_kpi_minutes(float(summary["avg_truck_out_lead_min"])),
-                    "출하 트럭의 평균 체류시간(도착~출고). 상차 대기, 제품 부족 등으로 지연될 수 있습니다. 목표: 90분 이내.",
-                ),
-                (
-                    "배치 평균시간",
-                    _format_kpi_minutes(float(summary["avg_melt_batch_min"])),
-                    "반사로 1배치 완료에 걸리는 평균 시간(분). 장입(2~3h) + 용해(12h) + 주조(8h) ≈ 22~24시간이 정상입니다.",
-                ),
-            ]
-            for _row in range(3):
-                _kcols = st.columns(4)
-                for _j in range(4):
-                    _idx = _row * 4 + _j
-                    if _idx >= len(_kpi_specs):
-                        break
-                    _label, _value, _help = _kpi_specs[_idx]
-                    with _kcols[_j]:
-                        st.metric(_label, _value, help=_help)
+_gunsan_bundle = st.session_state.get(_GUNSAN_LAST_RUN_BUNDLE_KEY)
+_gunsan_show_results = _gunsan_bundle is not None
 
-            st.header("📌 시뮬레이션 분석 결과 인사이트")
-            st.caption(
-                "KPI·자원 가동률·버퍼·일별 생산·트럭 이벤트를 바탕으로 규칙을 적용해 자동 생성한 요약입니다. "
-                "투자·인력·일정 결정은 반드시 현장 데이터와 함께 검토하세요."
-            )
-            _ins_col, _rec_col = st.columns(2)
-            with _ins_col:
-                st.subheader("관찰 포인트")
-                if analysis.insights:
-                    for _txt in analysis.insights:
-                        st.info(_txt)
-                else:
-                    st.caption("이번 실행에서 규칙으로 잡힌 특이 관찰이 없습니다.")
-            with _rec_col:
-                st.subheader("권장 액션")
-                if analysis.recommendations:
-                    for _txt in analysis.recommendations:
-                        st.warning(_txt)
-                else:
-                    st.caption("이번 실행에서 자동 권장 문구가 없습니다.")
-            with st.expander("🚛 트럭·물류 시사점 (누적 도착·출차·체류)", expanded=False):
-                if analysis.truck_flow_insights:
-                    for _txt in analysis.truck_flow_insights:
-                        st.markdown(f"- {_txt}")
-                else:
-                    st.caption("트럭 흐름용 해설이 없습니다.")
+if _gunsan_show_results and _main_page == "시뮬레이션":
+    metrics = _gunsan_bundle["metrics"]
+    analysis = _gunsan_bundle["analysis"]
+    cfg = _gunsan_bundle["cfg"]
+    sim_days = cfg.sim_days
+    random_seed = cfg.random_seed
+    trucks_per_day = cfg.inbound.trucks_per_day
+    payload_ton = cfg.inbound.payload_ton
+    unloading_bays = cfg.inbound.unloading_bays
+    sorters = cfg.sorting.sorters
+    press_machines = cfg.sorting.press_machines
+    pallet_buffer_capacity = cfg.sorting.pallet_buffer_capacity
+    furnace_count = cfg.melting.furnace_count
+    batch_ton = cfg.melting.batch_ton
+    flake_ratio = int(round(cfg.casting.flake_ratio * 100))
+    empty_truck_interval = int(round(cfg.outbound.empty_truck_interval_min))
+    summary = analysis.summary
 
-            st.header("📖 일반인을 위한 상세 결과 해석")
-            st.caption(
-                "이번 실행의 지표를 처음 보는 분도 흐름을 따라갈 수 있도록 풀어 썼습니다. "
-                "가동률·버퍼·트럭 등 **그래프는 옆의 시각자료 탭**에서 보시고, 아래 문단에서는 같은 내용을 말로 풀어 봅니다. "
-                "HTML 리포트의 ‘일반인’ 절에도 같은 그림이 붙어 있습니다. "
-                "투자·안전·계약 등 중요한 결정에는 참고용으로만 쓰고, 반드시 현장 검토가 필요합니다."
+    with st.expander("📌 이 시뮬 숫자가 어디서 오나요? (쉬운 설명)", expanded=False):
+        _render_simulation_inputs_layperson_guide()
+    _render_process_flow_section_header()
+    _render_process_flow_pipeline_html(
+        trucks_per_day=trucks_per_day,
+        payload_ton=payload_ton,
+        flake_ratio=flake_ratio,
+        furnace_count=furnace_count,
+        bottleneck=None,
+        show_tooltips=True,
+    )
+
+    # ===== KPI 카드 (4열×3행, 10개 지표) =====
+    st.header("📊 핵심 지표")
+    _kpi_specs: list[tuple[str, str, str | None]] = [
+        (
+            "처리 트럭 (입고)",
+            f"{summary['trucks_in_processed']} 대",
+            "시뮬레이션 기간 동안 입고 후 출차 완료된 트럭의 총 대수입니다. 1차 계근 → 하역 → 2차 계근 → 출차 과정을 완료한 트럭만 집계됩니다.",
+        ),
+        (
+            "출하 트럭",
+            f"{summary['trucks_out_dispatched']} 대",
+            "완제품을 적재하고 출고된 출하 트럭의 총 대수입니다. 빈 트럭 도착 → 상차 → 계근 → 출고 과정을 완료한 트럭만 집계됩니다.",
+        ),
+        (
+            "완료 배치",
+            f"{summary['melt_batches_completed']} 회",
+            "반사로에서 완료된 용해 배치의 총 횟수입니다. 1배치 = 장입 → 용해·정련 병목(약 13시간) → 주조 완료. 생산 능력의 핵심 지표입니다.",
+        ),
+        (
+            "총 생산량",
+            f"{summary['total_product_ton']:.0f} t",
+            "큐프레이크와 SCR 코일을 합한 총 생산량(톤)입니다. 출하된 제품 + 야적장 재고를 포함합니다.",
+        ),
+        (
+            "일평균 처리량",
+            f"{summary['throughput_ton_per_day']:.1f} t/일",
+            "일평균 생산량 = 총 생산량 ÷ 시뮬레이션 일수. 공장의 실질적인 생산 능력을 나타내는 핵심 KPI입니다.",
+        ),
+        (
+            "큐프레이크",
+            f"{summary['flake_ton']:.0f} t",
+            "생산된 Cu 플레이크의 총 중량(톤)입니다. 25kg 포대 단위로 생산되며, 전해 정련 및 합금 제조에 사용됩니다.",
+        ),
+        (
+            "SCR 코일",
+            f"{summary['scr_ton']:.0f} t",
+            "생산된 SCR(South Wire Rod) 코일의 총 중량(톤)입니다. 4톤/코일 단위로 생산되며, 전선/케이블 제조에 사용됩니다.",
+        ),
+        (
+            "입고 평균체류",
+            _format_kpi_minutes(float(summary["avg_truck_in_lead_min"])),
+            "입고 트럭의 평균 체류시간(도착~출차). 대기시간이 길면 하역장/계근대 병목을 의심해야 합니다. 목표: 60분 이내.",
+        ),
+        (
+            "출하 평균체류",
+            _format_kpi_minutes(float(summary["avg_truck_out_lead_min"])),
+            "출하 트럭의 평균 체류시간(도착~출고). 상차 대기, 제품 부족 등으로 지연될 수 있습니다. 목표: 90분 이내.",
+        ),
+        (
+            "배치 평균시간",
+            _format_kpi_minutes(float(summary["avg_melt_batch_min"])),
+            "반사로 1배치 완료에 걸리는 평균 시간(분). 장입(2~3h) + 용해(12h) + 주조(8h) ≈ 22~24시간이 정상입니다.",
+        ),
+    ]
+    for _row in range(3):
+        _kcols = st.columns(4)
+        for _j in range(4):
+            _idx = _row * 4 + _j
+            if _idx >= len(_kpi_specs):
+                break
+            _label, _value, _help = _kpi_specs[_idx]
+            with _kcols[_j]:
+                st.metric(_label, _value, help=_help)
+
+    st.header("📌 시뮬레이션 분석 결과 인사이트")
+    st.caption(
+        "KPI·자원 가동률·버퍼·일별 생산·트럭 이벤트를 바탕으로 규칙을 적용해 자동 생성한 요약입니다. "
+        "투자·인력·일정 결정은 반드시 현장 데이터와 함께 검토하세요."
+    )
+    _ins_col, _rec_col = st.columns(2)
+    with _ins_col:
+        st.subheader("관찰 포인트")
+        if analysis.insights:
+            for _txt in analysis.insights:
+                st.info(_txt)
+        else:
+            st.caption("이번 실행에서 규칙으로 잡힌 특이 관찰이 없습니다.")
+    with _rec_col:
+        st.subheader("권장 액션")
+        if analysis.recommendations:
+            for _txt in analysis.recommendations:
+                st.warning(_txt)
+        else:
+            st.caption("이번 실행에서 자동 권장 문구가 없습니다.")
+    with st.expander("🚛 트럭·물류 시사점 (누적 도착·출차·체류)", expanded=False):
+        if analysis.truck_flow_insights:
+            for _txt in analysis.truck_flow_insights:
+                st.markdown(f"- {_txt}")
+        else:
+            st.caption("트럭 흐름용 해설이 없습니다.")
+
+    st.header("📖 일반인을 위한 상세 결과 해석")
+    st.caption(
+        "이번 실행의 지표를 처음 보는 분도 흐름을 따라갈 수 있도록 풀어 썼습니다. "
+        "바로 아래 그래프로 가동률·재고·트럭·생산 흐름을 먼저 짐작한 뒤, 이어지는 문단에서 같은 내용을 말로 풀어 봅니다. "
+        "HTML 리포트의 ‘일반인’ 절에도 같은 그림이 붙어 있습니다. "
+        "투자·안전·계약 등 중요한 결정에는 참고용으로만 쓰고, 반드시 현장 검토가 필요합니다."
+    )
+    _lp_figs = build_layperson_visual_figures(metrics, cfg, analysis)
+    st.markdown("##### 이번 실행 그래프 요약")
+    st.caption(
+        "막대는 자원 가동률, 곡선은 버퍼·누적 트럭, 히스토그램은 트럭 체류시간, "
+        "막대 누적은 일별 생산, 가로 막대는 반사로 일정입니다. 범례를 눌러 선을 끄거나 호버로 숫자를 확인할 수 있습니다."
+    )
+    _lp_r1a, _lp_r1b = st.columns(2)
+    with _lp_r1a:
+        st.plotly_chart(
+            _style_layperson_result_figure(_lp_figs["utilization"]),
+            use_container_width=True,
+            key="gunsan_layperson_util",
+        )
+    with _lp_r1b:
+        st.plotly_chart(
+            _style_layperson_result_figure(_lp_figs["buffers"]),
+            use_container_width=True,
+            key="gunsan_layperson_buffer",
+        )
+    _lp_r2a, _lp_r2b = st.columns(2)
+    with _lp_r2a:
+        st.plotly_chart(
+            _style_layperson_result_figure(_lp_figs["trucks"]),
+            use_container_width=True,
+            key="gunsan_layperson_trucks",
+        )
+    with _lp_r2b:
+        st.plotly_chart(
+            _style_layperson_result_figure(_lp_figs["lead_times"]),
+            use_container_width=True,
+            key="gunsan_layperson_lead",
+        )
+    _lp_r3a, _lp_r3b = st.columns(2)
+    with _lp_r3a:
+        st.plotly_chart(
+            _style_layperson_result_figure(_lp_figs["daily_output"]),
+            use_container_width=True,
+            key="gunsan_layperson_daily",
+        )
+    with _lp_r3b:
+        st.plotly_chart(
+            _style_layperson_result_figure(_lp_figs["furnace_gantt"]),
+            use_container_width=True,
+            key="gunsan_layperson_gantt",
+        )
+    st.markdown(
+        layperson_interpretation_markdown(metrics, cfg, analysis),
+        unsafe_allow_html=True,
+    )
+
+    st.header("📜 시간순 사건 로그")
+    st.caption(
+        "시뮬레이션 동안 공장 안에서 일어난 일을 시간 순서대로 정리한 표입니다. "
+        "공정 구간이나 키워드로 걸러 보거나 CSV·Markdown 보고서로 내려받을 수 있습니다."
+    )
+    _ev_df_all = _build_events_log_df(metrics)
+    _report_ev_df = _ev_df_all.iloc[0:0]
+    _report_ev_total = int(len(_ev_df_all))
+    _report_ev_note = "이번 실행에서 기록된 사건이 없습니다."
+    _display_cols = ["#", "시각", "경과(분)", "구간", "사건", "상세 설명"]
+    if _ev_df_all.empty:
+        st.info("이번 실행에서 기록된 사건이 없습니다.")
+    else:
+        _stages = sorted(_ev_df_all["구간"].unique().tolist())
+        _f1, _f2 = st.columns(2)
+        with _f1:
+            _stage_pick = st.multiselect(
+                "공정 구간으로 보기",
+                options=_stages,
+                default=_stages,
+                key="gunsan_event_log_stages",
+                help="보고 싶은 공정 단계만 골라 표시합니다. 비워 두면 표가 비어 있게 됩니다.",
             )
-            st.markdown("##### 이번 실행 그래프")
-            st.info(
-                "Plotly 그래프(가동률, 버퍼, 누적 트럭, 체류 분포, 일별 생산, 반사로 간트)는 "
-                "**시각자료** 탭에서 한곳에 모아 보실 수 있습니다."
+        with _f2:
+            _needle = st.text_input(
+                "키워드 검색 (사건·상세 설명에서 부분 일치)",
+                "",
+                key="gunsan_event_log_search",
+                placeholder="예) 12번 트럭, 1호 반사로, 후레이크, 버퍼",
+                help="입력한 단어가 사건 이름이나 상세 설명에 포함된 행만 보여 줍니다.",
             )
+        if not _stage_pick:
+            st.warning("최소 한 개 이상의 공정 구간을 선택해 주세요.")
+            _df_view = _ev_df_all.iloc[0:0]
+            _report_ev_note = "공정 구간이 선택되지 않아 표가 비어 있습니다."
+        else:
+            _df_view = _ev_df_all[_ev_df_all["구간"].isin(_stage_pick)]
+            if _needle.strip():
+                _q = _needle.strip().casefold()
+                _mask = (
+                    _df_view["사건"].astype(str).str.casefold().str.contains(_q, na=False)
+                    | _df_view["상세 설명"].astype(str).str.casefold().str.contains(_q, na=False)
+                )
+                _df_view = _df_view[_mask]
+            _bits = [f"선택 구간: {', '.join(_stage_pick)}"]
+            if _needle.strip():
+                _bits.append(f"키워드 검색: `{_needle.strip()}`")
+            _report_ev_note = " · ".join(_bits)
+        _report_ev_df = _df_view
+        st.caption(f"표시 {len(_df_view):,}건 / 전체 {len(_ev_df_all):,}건")
+        # 화면에는 사람이 읽기 쉬운 한글 컬럼만 보이고, 영문 원본은 CSV/분석용으로 숨겨 둔다.
+        st.dataframe(
+            _df_view[_display_cols],
+            use_container_width=True,
+            height=420,
+            hide_index=True,
+        )
+        with st.expander("표에서 쓰인 용어 풀이", expanded=False):
             st.markdown(
-                layperson_interpretation_markdown(metrics, cfg, analysis),
-                unsafe_allow_html=True,
+                "- 시각: 시뮬 시작을 0일차 00:00 으로 본 시계. 예) `3일차 14:30`\n"
+                "- 경과(분): 시뮬 시작부터 흐른 시간(분)\n"
+                "- 구간: 공장 안에서 사건이 일어난 공정 단계\n"
+                "- 사건: 그 구간에서 일어난 일\n"
+                "- 상세 설명: 트럭 번호·반사로 번호·생산량·버퍼 상태 등 함께 기록된 정보"
             )
 
-            st.header("📜 시간순 사건 로그")
-            st.caption(
-                "시뮬레이션 동안 공장 안에서 일어난 일을 시간 순서대로 정리한 표입니다. "
-                "공정 구간이나 키워드로 걸러 보거나 CSV·Markdown 보고서로 내려받을 수 있습니다."
-            )
-            _ev_df_all = _build_events_log_df(metrics)
-            _report_ev_df = _ev_df_all.iloc[0:0]
-            _report_ev_total = int(len(_ev_df_all))
-            _report_ev_note = "이번 실행에서 기록된 사건이 없습니다."
-            _display_cols = ["#", "시각", "경과(분)", "구간", "사건", "상세 설명"]
-            if _ev_df_all.empty:
-                st.info("이번 실행에서 기록된 사건이 없습니다.")
-            else:
-                _stages = sorted(_ev_df_all["구간"].unique().tolist())
-                _f1, _f2 = st.columns(2)
-                with _f1:
-                    _stage_pick = st.multiselect(
-                        "공정 구간으로 보기",
-                        options=_stages,
-                        default=_stages,
-                        key="gunsan_event_log_stages",
-                        help="보고 싶은 공정 단계만 골라 표시합니다. 비워 두면 표가 비어 있게 됩니다.",
-                    )
-                with _f2:
-                    _needle = st.text_input(
-                        "키워드 검색 (사건·상세 설명에서 부분 일치)",
-                        "",
-                        key="gunsan_event_log_search",
-                        placeholder="예) 12번 트럭, 1호 반사로, 후레이크, 버퍼",
-                        help="입력한 단어가 사건 이름이나 상세 설명에 포함된 행만 보여 줍니다.",
-                    )
-                if not _stage_pick:
-                    st.warning("최소 한 개 이상의 공정 구간을 선택해 주세요.")
-                    _df_view = _ev_df_all.iloc[0:0]
-                    _report_ev_note = "공정 구간이 선택되지 않아 표가 비어 있습니다."
-                else:
-                    _df_view = _ev_df_all[_ev_df_all["구간"].isin(_stage_pick)]
-                    if _needle.strip():
-                        _q = _needle.strip().casefold()
-                        _mask = (
-                            _df_view["사건"].astype(str).str.casefold().str.contains(_q, na=False)
-                            | _df_view["상세 설명"].astype(str).str.casefold().str.contains(_q, na=False)
-                        )
-                        _df_view = _df_view[_mask]
-                    _bits = [f"선택 구간: {', '.join(_stage_pick)}"]
-                    if _needle.strip():
-                        _bits.append(f"키워드 검색: `{_needle.strip()}`")
-                    _report_ev_note = " · ".join(_bits)
-                _report_ev_df = _df_view
-                st.caption(f"표시 {len(_df_view):,}건 / 전체 {len(_ev_df_all):,}건")
-                # 화면에는 사람이 읽기 쉬운 한글 컬럼만 보이고, 영문 원본은 CSV/분석용으로 숨겨 둔다.
-                st.dataframe(
-                    _df_view[_display_cols],
-                    use_container_width=True,
-                    height=420,
-                    hide_index=True,
-                )
-                with st.expander("표에서 쓰인 용어 풀이", expanded=False):
-                    st.markdown(
-                        "- 시각: 시뮬 시작을 0일차 00:00 으로 본 시계. 예) `3일차 14:30`\n"
-                        "- 경과(분): 시뮬 시작부터 흐른 시간(분)\n"
-                        "- 구간: 공장 안에서 사건이 일어난 공정 단계\n"
-                        "- 사건: 그 구간에서 일어난 일\n"
-                        "- 상세 설명: 트럭 번호·반사로 번호·생산량·버퍼 상태 등 함께 기록된 정보"
-                    )
+    _ev_md_slice = (
+        _report_ev_df[_display_cols]
+        if not _report_ev_df.empty
+        and all(c in _report_ev_df.columns for c in _display_cols)
+        else _report_ev_df
+    )
+    _report_now = datetime.now()
+    _report_fn_ts = _report_now.strftime("%Y%m%d_%H%M%S")
+    _report_gen_stamp = _report_now.strftime("%Y-%m-%d %H:%M:%S")
+    _md_report = _build_simulation_results_markdown(
+        metrics,
+        cfg,
+        analysis,
+        _ev_md_slice,
+        _report_ev_total,
+        _report_ev_note,
+        _kpi_specs,
+        generated_at=_report_gen_stamp,
+    )
 
-            _ev_md_slice = (
-                _report_ev_df[_display_cols]
-                if not _report_ev_df.empty
-                and all(c in _report_ev_df.columns for c in _display_cols)
-                else _report_ev_df
-            )
-            _report_now = datetime.now()
-            _report_fn_ts = _report_now.strftime("%Y%m%d_%H%M%S")
-            _report_gen_stamp = _report_now.strftime("%Y-%m-%d %H:%M:%S")
-            _md_report = _build_simulation_results_markdown(
-                metrics,
-                cfg,
-                analysis,
-                _ev_md_slice,
-                _report_ev_total,
-                _report_ev_note,
-                _kpi_specs,
-                generated_at=_report_gen_stamp,
-            )
-
-            _dl_csv, _dl_md, _dl_pdf = st.columns(3)
-            with _dl_csv:
-                if not _ev_df_all.empty:
-                    _csv_bytes = _report_ev_df.to_csv(index=False).encode("utf-8-sig")
-                    st.download_button(
-                        label="CSV 다운로드 (현재 필터 적용)",
-                        data=_csv_bytes,
-                        file_name="gunsan_sim_event_log.csv",
-                        mime="text/csv",
-                        key="gunsan_event_log_csv",
-                        help="현재 필터·검색 조건에 맞는 행만 CSV로 내려받습니다. 영문 원본 stage/kind 컬럼도 함께 포함됩니다.",
-                    )
-                else:
-                    st.caption("사건 로그가 없어 CSV에 담을 행이 없습니다.")
-            with _dl_md:
-                st.download_button(
-                    label="Markdown 보고서",
-                    data=_md_report.encode("utf-8"),
-                    file_name=f"gunsan_sim_report_{_report_fn_ts}.md",
-                    mime="text/markdown",
-                    key="gunsan_md_full_report",
-                    help="KPI·해석·병목·표·인사이트·(현재 필터와 동일한) 사건 로그. Plotly 차트는 제외.",
-                )
-            with _dl_pdf:
-                _pdf_bytes, _pdf_err = markdown_simulation_report_to_pdf(_md_report)
-                if _pdf_bytes:
-                    st.download_button(
-                        label="PDF 보고서",
-                        data=_pdf_bytes,
-                        file_name=f"gunsan_sim_report_{_report_fn_ts}.pdf",
-                        mime="application/pdf",
-                        key="gunsan_pdf_full_report",
-                        help="Markdown 보고서와 동일 내용을 A4 PDF로 저장합니다. 한글 글꼴(맑은 고딕 등)이 필요합니다.",
-                    )
-                else:
-                    st.caption(_pdf_err or "PDF를 생성할 수 없습니다.")
-
-            # ===== 병목 진단 =====
-            st.header("🔍 병목 진단")
-            with st.expander("ℹ️ 병목(Bottleneck)이란?", expanded=False):
-                st.markdown("""
-                병목은 전체 공정의 처리량을 제한하는 가장 느린 공정 단계입니다.
-        
-                - 병목 자원의 가동률이 가장 높음 (90% 이상)
-                - 병목 앞단에 대기열/재고가 누적됨
-                - 병목 개선이 전체 처리량 향상에 직결됨
-        
-                일반적인 병목 순서: 반사로 용해 > 압착기 > 하역장 > 선별
-                """)
-            st.error(f"식별된 병목: {analysis.bottleneck} — {analysis.bottleneck_reason}")
-            st.caption(
-                "아래 HTML 공정 파이프라인 카드에서 병목 단계가 강조됩니다. "
-                "페이지 상단 「세부공정 프로세스」 차트는 흐름만 보여 주며 병목 색은 적용되지 않습니다."
-            )
-            _render_process_flow_pipeline_html(
-                trucks_per_day=trucks_per_day,
-                payload_ton=payload_ton,
-                flake_ratio=flake_ratio,
-                furnace_count=furnace_count,
-                bottleneck=analysis.bottleneck,
-                show_tooltips=True,
-            )
-
-    with tab_viz:
-        if not _gunsan_show_results:
-            st.info(
-                "아직 실행된 시뮬레이션 결과가 없습니다. "
-                "왼쪽 사이드바에서 **시뮬레이션 실행**을 누른 뒤, 이 **시각자료** 탭으로 돌아오면 그래프가 표시됩니다."
+    _dl_csv, _dl_md, _dl_pdf = st.columns(3)
+    with _dl_csv:
+        if not _ev_df_all.empty:
+            _csv_bytes = _report_ev_df.to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                label="CSV 다운로드 (현재 필터 적용)",
+                data=_csv_bytes,
+                file_name="gunsan_sim_event_log.csv",
+                mime="text/csv",
+                key="gunsan_event_log_csv",
+                help="현재 필터·검색 조건에 맞는 행만 CSV로 내려받습니다. 영문 원본 stage/kind 컬럼도 함께 포함됩니다.",
             )
         else:
-            _vb = st.session_state[_GUNSAN_LAST_RUN_BUNDLE_KEY]
-            st.header("📈 시각자료 (이번 실행)")
-            st.caption(
-                "막대는 자원 가동률, 곡선은 버퍼·누적 트럭, 히스토그램은 트럭 체류시간, "
-                "막대 누적은 일별 생산, 가로 막대는 반사로 일정입니다. 범례를 눌러 선을 끄거나 호버로 숫자를 확인할 수 있습니다."
+            st.caption("사건 로그가 없어 CSV에 담을 행이 없습니다.")
+    with _dl_md:
+        st.download_button(
+            label="Markdown 보고서",
+            data=_md_report.encode("utf-8"),
+            file_name=f"gunsan_sim_report_{_report_fn_ts}.md",
+            mime="text/markdown",
+            key="gunsan_md_full_report",
+            help="KPI·해석·병목·표·인사이트·(현재 필터와 동일한) 사건 로그. Plotly 차트는 제외.",
+        )
+    with _dl_pdf:
+        _pdf_bytes, _pdf_err = markdown_simulation_report_to_pdf(_md_report)
+        if _pdf_bytes:
+            st.download_button(
+                label="PDF 보고서",
+                data=_pdf_bytes,
+                file_name=f"gunsan_sim_report_{_report_fn_ts}.pdf",
+                mime="application/pdf",
+                key="gunsan_pdf_full_report",
+                help="Markdown 보고서와 동일 내용을 A4 PDF로 저장합니다. 한글 글꼴(맑은 고딕 등)이 필요합니다.",
             )
-            _render_layperson_plotly_figures(
-                _vb["metrics"],
-                _vb["cfg"],
-                _vb["analysis"],
-                chart_key_prefix="gunsan_viz_tab",
-            )
+        else:
+            st.caption(_pdf_err or "PDF를 생성할 수 없습니다.")
 
-    with tab_glossary:
-        _render_glossary_page()
+    # ===== 병목 진단 =====
+    st.header("🔍 병목 진단")
+    with st.expander("ℹ️ 병목(Bottleneck)이란?", expanded=False):
+        st.markdown("""
+        병목은 전체 공정의 처리량을 제한하는 가장 느린 공정 단계입니다.
+        
+        - 병목 자원의 가동률이 가장 높음 (90% 이상)
+        - 병목 앞단에 대기열/재고가 누적됨
+        - 병목 개선이 전체 처리량 향상에 직결됨
+        
+        일반적인 병목 순서: 반사로 용해 > 압착기 > 하역장 > 선별
+        """)
+    st.error(f"식별된 병목: {analysis.bottleneck} — {analysis.bottleneck_reason}")
+    st.caption(
+        "아래 HTML 공정 파이프라인 카드에서 병목 단계가 강조됩니다. "
+        "페이지 상단 「세부공정 프로세스」 차트는 흐름만 보여 주며 병목 색은 적용되지 않습니다."
+    )
+    _render_process_flow_pipeline_html(
+        trucks_per_day=trucks_per_day,
+        payload_ton=payload_ton,
+        flake_ratio=flake_ratio,
+        furnace_count=furnace_count,
+        bottleneck=analysis.bottleneck,
+        show_tooltips=True,
+    )
