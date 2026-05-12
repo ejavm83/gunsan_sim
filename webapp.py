@@ -35,7 +35,6 @@ st.set_page_config(
 import pandas  # noqa: F401 — plotly가 부분 초기화된 pandas를 보지 않도록 먼저 로드
 
 import streamlit.components.v1 as components
-from extra_streamlit_components import CookieManager
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -1619,13 +1618,12 @@ _COOKIE_CM_KEY = "gunsan_dashboard_cookie_mgr"
 _ENABLE_PASSWORD_AUTH = os.getenv("GUNSAN_ENABLE_PASSWORD_AUTH", "0") == "1"
 
 
-def _auth_cookie_manager() -> CookieManager:
-    """매 rerun마다 새 인스턴스를 만든다.
-
-    `CookieManager` 는 내부에서 Streamlit 커스텀 컴포넌트를 호출하기 때문에
-    `@st.cache_resource` 로 감싸면 ``CachedWidgetWarning`` 이 발생한다.
-    컴포넌트는 ``key`` 기준으로 dedup 되므로 매 rerun 재생성해도 안전하다.
-    """
+def _auth_cookie_manager():
+    """비밀번호 쿠키용 CookieManager. 패키지 미설치 시 None(세션만 사용)."""
+    try:
+        from extra_streamlit_components import CookieManager
+    except ImportError:
+        return None
     return CookieManager(key=_COOKIE_CM_KEY)
 
 
@@ -1891,7 +1889,9 @@ if "authenticated" not in st.session_state:
 
 if _ENABLE_PASSWORD_AUTH:
     _cookie_mgr = _auth_cookie_manager()
-    _cookie_val = _cookie_mgr.get(_DASHBOARD_AUTH_COOKIE)
+    _cookie_val = (
+        _cookie_mgr.get(_DASHBOARD_AUTH_COOKIE) if _cookie_mgr is not None else None
+    )
     if (
         not st.session_state.authenticated
         and _cookie_val == _DASHBOARD_AUTH_TOKEN
@@ -1912,14 +1912,15 @@ if _ENABLE_PASSWORD_AUTH:
         if st.button("접속", type="primary"):
             if password_input == _ACCESS_PASSWORD:
                 st.session_state.authenticated = True
-                _cookie_mgr.set(
-                    _DASHBOARD_AUTH_COOKIE,
-                    _DASHBOARD_AUTH_TOKEN,
-                    key="gunsan_auth_cookie_set",
-                    max_age=365.25 * 24 * 3600,
-                    path="/",
-                    same_site="lax",
-                )
+                if _cookie_mgr is not None:
+                    _cookie_mgr.set(
+                        _DASHBOARD_AUTH_COOKIE,
+                        _DASHBOARD_AUTH_TOKEN,
+                        key="gunsan_auth_cookie_set",
+                        max_age=365.25 * 24 * 3600,
+                        path="/",
+                        same_site="lax",
+                    )
                 st.rerun()
             else:
                 st.error("비밀번호가 올바르지 않습니다.")

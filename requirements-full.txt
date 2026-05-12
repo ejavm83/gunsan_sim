@@ -1,0 +1,5 @@
+# 웹 + 터미널(CLI)·애니메이션·extra-streamlit-components(비밀번호 쿠키)
+-r requirements.txt
+ortools>=9.12,<9.13
+matplotlib>=3.8
+extra-streamlit-components>=0.1.71
