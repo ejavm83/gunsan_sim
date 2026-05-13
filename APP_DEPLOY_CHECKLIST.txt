@@ -1,0 +1,26 @@
+Streamlit Community Cloud — 배포가 안 될 때 (gunsan_sim)
+
+1) Main file path
+   - webapp.py 권장 (또는 streamlit_app.py).
+   - main.py는 CLI용입니다(저장소에 Streamlit용 분기는 있으나 webapp 직접 지정이 가장 안전).
+
+2) Python 버전 (로그에 "Python 3.14"가 나오면 우선 여기)
+   - 앱 설정 → Advanced settings → Python version → 3.12.
+   - 3.14는 일부 패키지 휠이 없어 빌드/기동이 멈출 수 있습니다.
+   - 설정에 3.12가 없거나 바꿔도 로그가 계속 3.14면: 앱을 삭제한 뒤 같은 GitHub 저장소로 새로 만들며
+     처음부터 Python 3.12를 선택하세요(구 Cloud는 생성 시점에 런타임이 고정된 경우가 있습니다).
+
+3) 저장소/브랜치
+   - Repository: ejavm83/gunsan_sim (본인 계정 기준으로 확인)
+   - Branch: main
+
+4) 빌드 로그에서 확인할 것
+   - "Resolved … packages" 다음에 에러(빨간 Traceback)가 없는지.
+   - "ModuleNotFoundError", "No matching distribution", "Failed building wheel" 등이 있으면 해당 줄을 복사해 이슈로 남기면 됩니다.
+
+5) 의존성 파일
+   - 루트의 requirements.txt 하나만 쓰는 것을 권장합니다(pyproject + requirements 동시에 두면 Cloud가 하나만 쓸 수 있음).
+
+6) 재시도
+   - Manage app → Reboot.
+   - 캐시: 브라우저 강력 새로고침.

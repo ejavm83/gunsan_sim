@@ -1,12 +1,13 @@
 # Streamlit Community Cloud는 이 파일만 설치합니다.
-# Python: Cloud가 uv로 3.14를 쓰면 패키지 미지원으로 기동이 멈출 수 있다.
-#   저장소 루트의 .python-version(3.12)과 runtime.txt를 두었고,
-#   앱 설정 → Advanced settings → Python version에서 3.12를 고르는 것을 권장한다.
-# 앱 진입 파일: 루트의 webapp.py 또는 streamlit_app.py(동일 대시보드) — main.py는 웹용이 아닙니다.
-# 로컬에서 main.py·애니메이션·비밀번호 쿠키까지: pip install -r requirements-cli.txt
+# Python: 로그에 3.14.x가 나오면 휠/호환 문제로 "in the oven"에서 멈출 수 있다.
+#   Cloud 앱 설정 → Advanced settings → Python 3.12 선택.
+#   버전 변경이 안 되면 앱 삭제 후 같은 저장소로 새로 배포(또는 체크리스트 APP_DEPLOY_CHECKLIST.txt).
+# 앱 진입: webapp.py 또는 streamlit_app.py (main.py는 CLI용이나 Cloud 오설정 시 webapp으로 위임).
+# 로컬 전체(CLI·docx·쿠키 등): pip install -r requirements-cli.txt
 simpy>=4.1,<5
 plotly>=5.18,<6
 pandas>=2.0,<2.3
+numpy>=1.26,<3
+Pillow>=10,<12
 streamlit>=1.45.1,<2
-python-docx>=1.1.0
 reportlab>=4.0,<4.5
